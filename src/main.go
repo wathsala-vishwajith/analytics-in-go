@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
@@ -25,9 +26,16 @@ import (
 	"analytics-in-go/src/processor"
 )
 
+type TableCache struct {
+	Table      arrow.Table
+	LoadedAt   time.Time
+	AccessedAt time.Time
+}
+
 var (
-	arrowTables = make(map[string]array.Table) // endpoint -> Arrow Table
+	arrowTables = make(map[string]*TableCache) // endpoint -> TableCache
 	arrowMu     sync.RWMutex
+	maxAge      = 1 * time.Hour // Unload after 1 hour of no access
 )
 
 func fileHash(path string) (string, error) {
@@ -118,37 +126,65 @@ func loadParquetToArrow(parquetPath string) (arrow.Table, error) {
 		}
 	}
 	fields := make([]arrow.Field, 0, len(builders))
-	arrs := make([]arrow.Array, 0, len(builders))
+	columns := make([]arrow.Column, 0, len(builders))
 	for k, b := range builders {
-		fields = append(fields, arrow.Field{Name: k, Type: arrow.BinaryTypes.String})
-		arrs = append(arrs, b.NewArray())
+		field := arrow.Field{Name: k, Type: arrow.BinaryTypes.String}
+		fields = append(fields, field)
+		arr := b.NewArray()
+		chunked := arrow.NewChunked(arrow.BinaryTypes.String, []arrow.Array{arr})
+		col := arrow.NewColumn(field, chunked)
+		columns = append(columns, *col)
 		b.Release()
 	}
 	schema := arrow.NewSchema(fields, nil)
-	tbl := array.NewTable(schema, arrs, int64(num))
+	tbl := array.NewTable(schema, columns, int64(num))
+	return tbl, nil
+}
+
+func getTable(endpoint string, cfg *config.Config) (arrow.Table, error) {
+	arrowMu.RLock()
+	cache, exists := arrowTables[endpoint]
+	arrowMu.RUnlock()
+
+	if exists {
+		if time.Since(cache.AccessedAt) > maxAge {
+			// Expired, remove from memory
+			arrowMu.Lock()
+			delete(arrowTables, endpoint)
+			arrowMu.Unlock()
+		} else {
+			// Update access time
+			arrowMu.Lock()
+			cache.AccessedAt = time.Now()
+			arrowMu.Unlock()
+			return cache.Table, nil
+		}
+	}
+
+	// Load table if not exists or expired
+	tbl, err := loadParquetToArrow(cfg.OutputParquet)
+	if err != nil {
+		return nil, err
+	}
+
+	arrowMu.Lock()
+	arrowTables[endpoint] = &TableCache{
+		Table:      tbl,
+		LoadedAt:   time.Now(),
+		AccessedAt: time.Now(),
+	}
+	arrowMu.Unlock()
+
 	return tbl, nil
 }
 
 func serveAPI(configs []*config.Config) {
-	// Load all Arrow tables into memory
-	for _, cfg := range configs {
-		tbl, err := loadParquetToArrow(cfg.OutputParquet)
-		if err != nil {
-			log.Printf("Failed to load Arrow table for %s: %v", cfg.TableName, err)
-			continue
-		}
-		arrowMu.Lock()
-		arrowTables[cfg.URLEndpoint] = tbl
-		arrowMu.Unlock()
-	}
 	for _, cfg := range configs {
 		endpoint := cfg.URLEndpoint
 		http.HandleFunc(endpoint, func(w http.ResponseWriter, r *http.Request) {
-			arrowMu.RLock()
-			tbl, ok := arrowTables[endpoint]
-			arrowMu.RUnlock()
-			if !ok {
-				http.Error(w, "Data not loaded", http.StatusInternalServerError)
+			tbl, err := getTable(endpoint, cfg)
+			if err != nil {
+				http.Error(w, "Data not loaded: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 			// Convert Arrow Table to JSON (array of maps)
@@ -156,8 +192,12 @@ func serveAPI(configs []*config.Config) {
 			for i := int64(0); i < tbl.NumRows(); i++ {
 				row := make(map[string]interface{})
 				for j, col := range tbl.Schema().Fields() {
-					arr := tbl.Column(j).Data()
-					row[col.Name] = arr.(*array.String).Value(int(i))
+					colData := tbl.Column(j)
+					chunked := colData.Data()
+					if chunked.Len() > 0 {
+						arr := chunked.Chunk(0).(*array.String)
+						row[col.Name] = arr.Value(int(i))
+					}
 				}
 				records = append(records, row)
 			}
