@@ -24,6 +24,7 @@ type Config struct {
 	OutputArrow   string   `yaml:"output_arrow"`
 	Columns       []Column `yaml:"columns"`
 	SortBy        SortBy   `yaml:"sort_by"`
+	Limit         int      `yaml:"limit,omitempty"`
 }
 
 func LoadConfig(path string) (*Config, error) {

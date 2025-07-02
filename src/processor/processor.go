@@ -125,5 +125,10 @@ func Aggregate(rows []model.Row, cfg *config.Config) ([]AggregatedRow, error) {
 		})
 	}
 
+	// Apply limit if specified
+	if cfg.Limit > 0 && len(resultList) > cfg.Limit {
+		resultList = resultList[:cfg.Limit]
+	}
+
 	return resultList, nil
 }
