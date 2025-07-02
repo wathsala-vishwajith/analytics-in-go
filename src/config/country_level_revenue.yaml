@@ -1,0 +1,18 @@
+table_name: country_level_revenue
+input_csv: ../data/raw/GO_test_5m.csv
+output_parquet: ../data/processed/country_level_revenue.parquet
+output_arrow: ../data/processed/country_level_revenue.arrow
+columns:
+  - name: Country
+    type: string
+  - name: Product Name
+    type: string
+  - name: Total Revenue
+    type: float
+    aggregate: sum
+  - name: Number of Transactions
+    type: int
+    aggregate: sum
+sort_by:
+  column: Total Revenue
+  order: desc 
