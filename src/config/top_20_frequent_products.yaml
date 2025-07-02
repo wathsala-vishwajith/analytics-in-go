@@ -1,0 +1,16 @@
+table_name: top_20_frequent_products
+input_csv: ../data/raw/GO_test_5m.csv
+output_parquet: ../data/processed/top_20_frequent_products.parquet
+output_arrow: ../data/processed/top_20_frequent_products.arrow
+columns:
+  - name: Product Name
+    type: string
+  - name: Purchase Count
+    type: int
+    aggregate: sum
+  - name: Stock Quantity
+    type: int
+sort_by:
+  column: Purchase Count
+  order: desc
+limit: 20 
