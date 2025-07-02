@@ -15,4 +15,5 @@ columns:
     aggregate: sum
 sort_by:
   column: Total Revenue
-  order: desc 
+  order: desc
+url_endpoint: /api/country-level-revenue 

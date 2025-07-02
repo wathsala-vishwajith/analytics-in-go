@@ -13,4 +13,5 @@ columns:
 sort_by:
   column: Purchase Count
   order: desc
-limit: 20 
+limit: 20
+url_endpoint: /api/top-20-frequent-products 
