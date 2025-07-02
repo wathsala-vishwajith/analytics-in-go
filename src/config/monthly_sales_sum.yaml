@@ -1,0 +1,13 @@
+table_name: monthly_sales_sum
+input_csv: ../data/raw/sales.csv
+output_parquet: ../data/processed/monthly_sales_sum.parquet
+output_arrow: ../data/processed/monthly_sales_sum.arrow
+columns:
+  - name: Month
+    type: string
+  - name: Total Sales
+    type: float
+    aggregate: sum
+sort_by:
+  column: Total Sales
+  order: desc 
