@@ -3,9 +3,11 @@ package processor
 import (
 	"encoding/csv"
 	"fmt"
+	"log"
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 
 	"analytics-in-go/src/config"
 	"analytics-in-go/src/model"
@@ -160,26 +162,81 @@ func Aggregate(rows []model.Row, cfg *config.Config) ([]AggregatedRow, error) {
 	return resultList, nil
 }
 
+func generateParquetSchema(row AggregatedRow) (string, error) {
+	fields := []string{}
+	// To maintain a consistent order for columns in the schema
+	keys := make([]string, 0, len(row))
+	for k := range row {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, name := range keys {
+		val := row[name]
+		var parquetType string
+		switch val.(type) {
+		case string:
+			parquetType = "BYTE_ARRAY"
+		case int, int64:
+			parquetType = "INT64"
+		case float64, float32:
+			parquetType = "DOUBLE"
+		default:
+			// Fallback for safety, though aggregation logic should prevent this
+			parquetType = "BYTE_ARRAY"
+		}
+		fields = append(fields, fmt.Sprintf(`{"Tag": "name=%s, type=%s, repetitiontype=REQUIRED"}`, name, parquetType))
+	}
+
+	schema := fmt.Sprintf(`{
+		"Tag": "name=parquet_go_root, repetitiontype=REQUIRED",
+		"Fields": [%s]
+	}`, strings.Join(fields, ","))
+
+	return schema, nil
+}
+
 func WriteParquet(outputPath string, data []AggregatedRow) error {
+	if len(data) == 0 {
+		log.Println("No data to write to parquet, skipping file creation.")
+		return nil
+	}
+
+	log.Printf("Writing %d rows to parquet file: %s", len(data), outputPath)
+
+	schema, err := generateParquetSchema(data[0])
+	if err != nil {
+		return fmt.Errorf("failed to generate parquet schema: %w", err)
+	}
+
+	log.Printf("Generated schema: %s", schema)
+
 	f, err := local.NewLocalFileWriter(outputPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create file writer: %w", err)
 	}
 	defer f.Close()
 
-	pw, err := writer.NewJSONWriter("record", f, 4)
+	pw, err := writer.NewJSONWriter(schema, f, 4)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create parquet writer: %w", err)
 	}
-	defer pw.WriteStop()
 
-	for _, row := range data {
-		err := pw.Write(row)
-		if err != nil {
-			return err
+	// Write all data
+	for i, row := range data {
+		if err := pw.Write(row); err != nil {
+			// Try to close writer on error
+			pw.WriteStop()
+			return fmt.Errorf("failed to write row %d: %w", i, err)
 		}
 	}
 
+	// Close the writer properly
+	if err := pw.WriteStop(); err != nil {
+		return fmt.Errorf("failed to close parquet writer: %w", err)
+	}
+
+	log.Printf("Successfully wrote %d rows to %s", len(data), outputPath)
 	return nil
 }
 

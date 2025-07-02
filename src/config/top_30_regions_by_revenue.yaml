@@ -3,16 +3,16 @@ input_csv: data/raw/GO_test_5m.csv
 output_parquet: data/processed/top_30_regions_by_revenue.parquet
 output_arrow: data/processed/top_30_regions_by_revenue.arrow
 columns:
-  - name: Region
+  - name: region
     type: string
-  - name: Total Revenue
+  - name: total_price
     type: float
     aggregate: sum
-  - name: Items Sold
+  - name: quantity
     type: int
     aggregate: sum
 sort_by:
-  column: Total Revenue
+  column: total_price
   order: desc
 limit: 30
 url_endpoint: /api/top-30-regions-by-revenue 

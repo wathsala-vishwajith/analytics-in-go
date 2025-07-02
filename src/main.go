@@ -65,7 +65,10 @@ func fileHash(path string) (string, error) {
 
 func hashFilePath(csvPath string) string {
 	base := filepath.Base(csvPath)
-	return filepath.Join("data/raw", base+".hash")
+	dir := filepath.Dir(csvPath)
+	hashPath := filepath.Join(dir, base+".hash")
+	verboseLog("Hash file path for %s: %s", csvPath, hashPath)
+	return hashPath
 }
 
 func readSavedHash(csvPath string) (string, error) {

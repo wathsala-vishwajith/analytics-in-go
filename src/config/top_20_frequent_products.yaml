@@ -3,15 +3,15 @@ input_csv: data/raw/GO_test_5m.csv
 output_parquet: data/processed/top_20_frequent_products.parquet
 output_arrow: data/processed/top_20_frequent_products.arrow
 columns:
-  - name: Product Name
+  - name: product_name
     type: string
-  - name: Purchase Count
+  - name: quantity
     type: int
     aggregate: sum
-  - name: Stock Quantity
+  - name: stock_quantity
     type: int
 sort_by:
-  column: Purchase Count
+  column: quantity
   order: desc
 limit: 20
 url_endpoint: /api/top-20-frequent-products 

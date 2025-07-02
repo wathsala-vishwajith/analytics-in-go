@@ -3,12 +3,12 @@ input_csv: data/raw/GO_test_5m.csv
 output_parquet: data/processed/monthly_sales_sum.parquet
 output_arrow: data/processed/monthly_sales_sum.arrow
 columns:
-  - name: Month
+  - name: transaction_date
     type: string
-  - name: Total Sales
+  - name: total_price
     type: float
     aggregate: sum
 sort_by:
-  column: Total Sales
+  column: total_price
   order: desc
 url_endpoint: /api/monthly-sales-sum 

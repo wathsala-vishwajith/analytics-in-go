@@ -3,17 +3,17 @@ input_csv: data/raw/GO_test_5m.csv
 output_parquet: data/processed/country_level_revenue.parquet
 output_arrow: data/processed/country_level_revenue.arrow
 columns:
-  - name: Country
+  - name: country
     type: string
-  - name: Product Name
+  - name: product_name
     type: string
-  - name: Total Revenue
+  - name: total_price
     type: float
     aggregate: sum
-  - name: Number of Transactions
+  - name: quantity
     type: int
     aggregate: sum
 sort_by:
-  column: Total Revenue
+  column: total_price
   order: desc
 url_endpoint: /api/country-level-revenue 
