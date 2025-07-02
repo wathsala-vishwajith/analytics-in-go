@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,14 +17,15 @@ import (
 	"sync"
 	"time"
 
+	"analytics-in-go/src/config"
+	"analytics-in-go/src/processor"
+
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
-	"github.com/xitongsys/parquet-go-source/local"
-	"github.com/xitongsys/parquet-go/reader"
-
-	"analytics-in-go/src/config"
-	"analytics-in-go/src/processor"
+	"github.com/apache/arrow/go/v14/parquet"
+	"github.com/apache/arrow/go/v14/parquet/file"
+	pqarrow "github.com/apache/arrow/go/v14/parquet/pqarrow"
 )
 
 type TableCache struct {
@@ -129,54 +131,48 @@ func LoadAllConfigs(configDir string) ([]*config.Config, error) {
 }
 
 func loadParquetToArrow(parquetPath string) (arrow.Table, error) {
-	fr, err := local.NewLocalFileReader(parquetPath)
+	verboseLog("Loading parquet file: %s", parquetPath)
+	// Open the parquet file
+	f, err := os.Open(parquetPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open parquet file: %w", err)
 	}
-	defer fr.Close()
+	defer f.Close()
 
-	pr, err := reader.NewParquetReader(fr, nil, 4)
+	// Create parquet file reader
+	pf, err := file.NewParquetReader(f, file.WithReadProps(parquet.NewReaderProperties(memory.NewGoAllocator())))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create parquet reader: %w", err)
 	}
-	defer pr.ReadStop()
+	defer pf.Close()
 
-	num := int(pr.GetNumRows())
-	if num == 0 {
-		return nil, fmt.Errorf("no rows in parquet file")
-	}
-	rows := make([]map[string]interface{}, num)
-	if err := pr.Read(&rows); err != nil {
-		return nil, err
+	verboseLog("Parquet file metadata - num row groups: %d", pf.NumRowGroups())
+
+	// Create Arrow file reader
+	fileReader, err := pqarrow.NewFileReader(pf, pqarrow.ArrowReadProperties{}, memory.NewGoAllocator())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create arrow file reader: %w", err)
 	}
 
-	pool := memory.NewGoAllocator()
-	builders := make(map[string]*array.StringBuilder)
-	for k := range rows[0] {
-		builders[k] = array.NewStringBuilder(pool)
+	// Read the entire file as a table
+	tbl, err := fileReader.ReadTable(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to read table: %w", err)
 	}
-	for _, row := range rows {
-		for k, v := range row {
-			builders[k].Append(fmt.Sprintf("%v", v))
-		}
-	}
-	fields := make([]arrow.Field, 0, len(builders))
-	columns := make([]arrow.Column, 0, len(builders))
-	for k, b := range builders {
-		field := arrow.Field{Name: k, Type: arrow.BinaryTypes.String}
-		fields = append(fields, field)
-		arr := b.NewArray()
-		chunked := arrow.NewChunked(arrow.BinaryTypes.String, []arrow.Array{arr})
-		col := arrow.NewColumn(field, chunked)
-		columns = append(columns, *col)
-		b.Release()
-	}
-	schema := arrow.NewSchema(fields, nil)
-	tbl := array.NewTable(schema, columns, int64(num))
+
+	verboseLog("Loaded table with %d rows and %d columns", tbl.NumRows(), tbl.NumCols())
+	verboseLog("Schema: %s", tbl.Schema())
+
 	return tbl, nil
 }
 
 func getTable(endpoint string, cfg *config.Config) (arrow.Table, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			verboseLog("Panic in getTable for %s: %v", endpoint, r)
+		}
+	}()
+
 	verboseLog("Getting table for endpoint: %s", endpoint)
 	arrowMu.RLock()
 	cache, exists := arrowTables[endpoint]
@@ -199,8 +195,11 @@ func getTable(endpoint string, cfg *config.Config) (arrow.Table, error) {
 	}
 
 	verboseLog("Loading table into cache for %s", endpoint)
+	verboseLog("Config details: TableName=%s, OutputParquet=%s", cfg.TableName, cfg.OutputParquet)
+
 	tbl, err := loadParquetToArrow(cfg.OutputParquet)
 	if err != nil {
+		verboseLog("Failed to load parquet to arrow for %s: %v", endpoint, err)
 		return nil, err
 	}
 
@@ -219,12 +218,25 @@ func getTable(endpoint string, cfg *config.Config) (arrow.Table, error) {
 func serveAPI(configs []*config.Config) {
 	for _, cfg := range configs {
 		endpoint := cfg.URLEndpoint
+		currentCfg := cfg // Capture current config to avoid closure issue
 		http.HandleFunc(endpoint, func(w http.ResponseWriter, r *http.Request) {
-			tbl, err := getTable(endpoint, cfg)
+			defer func() {
+				if r := recover(); r != nil {
+					verboseLog("Panic in handler for %s: %v", endpoint, r)
+					http.Error(w, fmt.Sprintf("Internal error: %v", r), http.StatusInternalServerError)
+				}
+			}()
+
+			verboseLog("Handling request for endpoint: %s", endpoint)
+			tbl, err := getTable(endpoint, currentCfg)
 			if err != nil {
+				verboseLog("Failed to get table for %s: %v", endpoint, err)
 				http.Error(w, "Data not loaded: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
+
+			verboseLog("Got table with %d rows and %d columns", tbl.NumRows(), tbl.NumCols())
+
 			// Convert Arrow Table to JSON (array of maps)
 			records := make([]map[string]interface{}, 0)
 			for i := int64(0); i < tbl.NumRows(); i++ {
@@ -233,12 +245,32 @@ func serveAPI(configs []*config.Config) {
 					colData := tbl.Column(j)
 					chunked := colData.Data()
 					if chunked.Len() > 0 {
-						arr := chunked.Chunk(0).(*array.String)
-						row[col.Name] = arr.Value(int(i))
+						chunk := chunked.Chunk(0)
+						if int(i) < chunk.Len() {
+							switch arr := chunk.(type) {
+							case *array.String:
+								row[col.Name] = arr.Value(int(i))
+							case *array.Int64:
+								row[col.Name] = arr.Value(int(i))
+							case *array.Float64:
+								row[col.Name] = arr.Value(int(i))
+							default:
+								// Fallback to string representation
+								row[col.Name] = chunk.ValueStr(int(i))
+							}
+						} else {
+							verboseLog("Index %d out of range for chunk length %d", i, chunk.Len())
+							row[col.Name] = nil
+						}
+					} else {
+						verboseLog("No chunks available for column %s", col.Name)
+						row[col.Name] = nil
 					}
 				}
 				records = append(records, row)
 			}
+
+			verboseLog("Successfully converted %d records to JSON", len(records))
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(records)
 		})
@@ -247,32 +279,10 @@ func serveAPI(configs []*config.Config) {
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-func main() {
-	serveFlag := flag.Bool("serve", false, "Run as web server (REST API)")
-	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging")
-	flag.Parse()
-
-	verbose = *verboseFlag
-	if verbose {
-		log.Println("Verbose logging enabled")
-	}
-
-	configDir := "config"
-	verboseLog("Starting application in directory: %s", configDir)
-	configs, err := LoadAllConfigs(configDir)
-	if err != nil {
-		log.Fatalf("Error loading configs: %v", err)
-	}
-
-	if *serveFlag {
-		log.Printf("Starting in server mode with %d endpoints", len(configs))
-		serveAPI(configs)
-		return
-	}
-
-	log.Printf("Starting preprocessing for %d configs", len(configs))
+func ensureParquetFiles(configs []*config.Config) {
+	log.Printf("Ensuring parquet files are ready for %d configs", len(configs))
 	for _, cfg := range configs {
-		verboseLog("Processing config: %s", cfg.TableName)
+		verboseLog("Checking config: %s", cfg.TableName)
 		parquetExists := false
 		if _, err := os.Stat(cfg.OutputParquet); err == nil {
 			parquetExists = true
@@ -317,5 +327,34 @@ func main() {
 		}
 		fmt.Printf("✅ Preprocessing complete. Output written to: %s\n", cfg.OutputParquet)
 	}
-	verboseLog("All preprocessing completed")
+	verboseLog("All parquet files ensured")
+}
+
+func main() {
+	serveFlag := flag.Bool("serve", false, "Run as web server (REST API)")
+	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging")
+	flag.Parse()
+
+	verbose = *verboseFlag
+	if verbose {
+		log.Println("Verbose logging enabled")
+	}
+
+	configDir := "config"
+	verboseLog("Starting application in directory: %s", configDir)
+	configs, err := LoadAllConfigs(configDir)
+	if err != nil {
+		log.Fatalf("Error loading configs: %v", err)
+	}
+
+	// Always ensure parquet files exist (whether serving or preprocessing)
+	ensureParquetFiles(configs)
+
+	if *serveFlag {
+		log.Printf("Starting in server mode with %d endpoints", len(configs))
+		serveAPI(configs)
+		return
+	}
+
+	log.Printf("All preprocessing completed")
 }

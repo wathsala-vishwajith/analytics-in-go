@@ -12,8 +12,11 @@ import (
 	"analytics-in-go/src/config"
 	"analytics-in-go/src/model"
 
-	"github.com/xitongsys/parquet-go-source/local"
-	"github.com/xitongsys/parquet-go/writer"
+	"github.com/apache/arrow/go/v14/arrow"
+	"github.com/apache/arrow/go/v14/arrow/array"
+	"github.com/apache/arrow/go/v14/arrow/memory"
+	"github.com/apache/arrow/go/v14/parquet"
+	pqarrow "github.com/apache/arrow/go/v14/parquet/pqarrow"
 )
 
 type AggregatedRow map[string]interface{}
@@ -204,36 +207,122 @@ func WriteParquet(outputPath string, data []AggregatedRow) error {
 
 	log.Printf("Writing %d rows to parquet file: %s", len(data), outputPath)
 
-	schema, err := generateParquetSchema(data[0])
+	// Use direct parquet writer approach for better performance
+	f, err := os.Create(outputPath)
 	if err != nil {
-		return fmt.Errorf("failed to generate parquet schema: %w", err)
-	}
-
-	log.Printf("Generated schema: %s", schema)
-
-	f, err := local.NewLocalFileWriter(outputPath)
-	if err != nil {
-		return fmt.Errorf("failed to create file writer: %w", err)
+		return fmt.Errorf("failed to create file: %w", err)
 	}
 	defer f.Close()
 
-	pw, err := writer.NewJSONWriter(schema, f, 4)
+	// Build Arrow schema
+	fields := make([]arrow.Field, 0, len(data[0]))
+	for key, value := range data[0] {
+		var dataType arrow.DataType
+		switch value.(type) {
+		case string:
+			dataType = arrow.BinaryTypes.String
+		case int, int64:
+			dataType = arrow.PrimitiveTypes.Int64
+		case float64:
+			dataType = arrow.PrimitiveTypes.Float64
+		default:
+			dataType = arrow.BinaryTypes.String
+		}
+		fields = append(fields, arrow.Field{Name: key, Type: dataType})
+	}
+
+	// Sort fields for consistent ordering
+	sort.Slice(fields, func(i, j int) bool {
+		return fields[i].Name < fields[j].Name
+	})
+
+	schema := arrow.NewSchema(fields, nil)
+
+	// Create parquet writer
+	props := parquet.NewWriterProperties()
+	arrowProps := pqarrow.DefaultWriterProps()
+
+	pqWriter, err := pqarrow.NewFileWriter(schema, f, props, arrowProps)
 	if err != nil {
 		return fmt.Errorf("failed to create parquet writer: %w", err)
 	}
+	defer pqWriter.Close()
 
-	// Write all data
-	for i, row := range data {
-		if err := pw.Write(row); err != nil {
-			// Try to close writer on error
-			pw.WriteStop()
-			return fmt.Errorf("failed to write row %d: %w", i, err)
+	// Write data in batches to avoid memory issues
+	const batchSize = 10000
+	pool := memory.NewGoAllocator()
+
+	for i := 0; i < len(data); i += batchSize {
+		end := i + batchSize
+		if end > len(data) {
+			end = len(data)
 		}
-	}
 
-	// Close the writer properly
-	if err := pw.WriteStop(); err != nil {
-		return fmt.Errorf("failed to close parquet writer: %w", err)
+		// Build record batch
+		builders := make([]array.Builder, len(fields))
+		for j, field := range fields {
+			switch field.Type {
+			case arrow.BinaryTypes.String:
+				builders[j] = array.NewStringBuilder(pool)
+			case arrow.PrimitiveTypes.Int64:
+				builders[j] = array.NewInt64Builder(pool)
+			case arrow.PrimitiveTypes.Float64:
+				builders[j] = array.NewFloat64Builder(pool)
+			}
+		}
+
+		// Add data to builders
+		for rowIdx := i; rowIdx < end; rowIdx++ {
+			row := data[rowIdx]
+			for j, field := range fields {
+				value := row[field.Name]
+				switch builder := builders[j].(type) {
+				case *array.StringBuilder:
+					if str, ok := value.(string); ok {
+						builder.Append(str)
+					} else {
+						builder.Append(fmt.Sprintf("%v", value))
+					}
+				case *array.Int64Builder:
+					if i64, ok := value.(int64); ok {
+						builder.Append(i64)
+					} else if f64, ok := value.(float64); ok {
+						builder.Append(int64(f64))
+					} else {
+						builder.Append(0)
+					}
+				case *array.Float64Builder:
+					if f64, ok := value.(float64); ok {
+						builder.Append(f64)
+					} else {
+						builder.Append(0)
+					}
+				}
+			}
+		}
+
+		// Build arrays
+		columns := make([]arrow.Array, len(builders))
+		for j, builder := range builders {
+			columns[j] = builder.NewArray()
+		}
+
+		// Create record
+		record := array.NewRecord(schema, columns, int64(end-i))
+
+		// Write record
+		if err := pqWriter.Write(record); err != nil {
+			record.Release()
+			return fmt.Errorf("failed to write batch %d: %w", i/batchSize, err)
+		}
+
+		record.Release()
+		for _, col := range columns {
+			col.Release()
+		}
+		for _, builder := range builders {
+			builder.Release()
+		}
 	}
 
 	log.Printf("Successfully wrote %d rows to %s", len(data), outputPath)
