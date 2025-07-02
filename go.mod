@@ -4,6 +4,7 @@ go 1.24.4
 
 require (
 	github.com/apache/arrow/go/v14 v14.0.2
+	github.com/fsnotify/fsnotify v1.5.1
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20241021075129-b732d2ac9c9b
 	gopkg.in/yaml.v3 v3.0.1

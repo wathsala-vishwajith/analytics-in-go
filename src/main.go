@@ -26,6 +26,7 @@ import (
 	"github.com/apache/arrow/go/v14/parquet"
 	"github.com/apache/arrow/go/v14/parquet/file"
 	pqarrow "github.com/apache/arrow/go/v14/parquet/pqarrow"
+	"github.com/fsnotify/fsnotify"
 )
 
 type TableCache struct {
@@ -39,6 +40,12 @@ var (
 	arrowMu     sync.RWMutex
 	maxAge      = 1 * time.Hour // Unload after 1 hour of no access
 	verbose     bool
+
+	// Dynamic config management
+	currentConfigs []*config.Config
+	configsMu      sync.RWMutex
+	httpMux        *http.ServeMux
+	httpMuxMu      sync.RWMutex
 )
 
 func verboseLog(format string, args ...interface{}) {
@@ -216,10 +223,134 @@ func getTable(endpoint string, cfg *config.Config) (arrow.Table, error) {
 }
 
 func serveAPI(configs []*config.Config) {
+	// Initialize HTTP endpoints
+	updateHTTPEndpoints(configs)
+
+	// Create a dynamic handler that uses the current mux
+	dynamicHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpMuxMu.RLock()
+		currentMux := httpMux
+		httpMuxMu.RUnlock()
+
+		if currentMux != nil {
+			currentMux.ServeHTTP(w, r)
+		} else {
+			http.Error(w, "Server not ready", http.StatusServiceUnavailable)
+		}
+	})
+
+	fmt.Println("Serving API on :8080 with real-time config watching...")
+	log.Fatal(http.ListenAndServe(":8080", dynamicHandler))
+}
+
+func ensureParquetFiles(configs []*config.Config) {
+	log.Printf("Ensuring parquet files are ready for %d configs", len(configs))
+	for _, cfg := range configs {
+		verboseLog("Checking config: %s", cfg.TableName)
+		parquetExists := false
+		if _, err := os.Stat(cfg.OutputParquet); err == nil {
+			parquetExists = true
+			verboseLog("Parquet file exists: %s", cfg.OutputParquet)
+		} else {
+			verboseLog("Parquet file does not exist: %s", cfg.OutputParquet)
+		}
+
+		currentHash, err := fileHash(cfg.InputCSV)
+		if err != nil {
+			log.Printf("Failed to hash CSV for config %s: %v", cfg.TableName, err)
+			continue
+		}
+
+		savedHash, err := readSavedHash(cfg.InputCSV)
+		if parquetExists && err == nil && savedHash == currentHash {
+			fmt.Printf("Parquet up-to-date for %s, skipping.\n", cfg.TableName)
+			verboseLog("Hash matches, skipping processing for %s", cfg.TableName)
+			continue
+		}
+
+		verboseLog("Hash differs or file missing, processing %s", cfg.TableName)
+
+		// Ensure output directory exists
+		outputDir := filepath.Dir(cfg.OutputParquet)
+		verboseLog("Creating output directory: %s", outputDir)
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			log.Printf("Failed to create output directory for %s: %v", cfg.TableName, err)
+			continue
+		}
+
+		verboseLog("Starting preprocessing for %s", cfg.TableName)
+		processingStart := time.Now()
+		if err := processor.Preprocess(cfg); err != nil {
+			log.Printf("Preprocessing failed for %s: %v", cfg.TableName, err)
+			continue
+		}
+		verboseLog("Preprocessing completed in %v for %s", time.Since(processingStart), cfg.TableName)
+
+		if err := saveHash(cfg.InputCSV, currentHash); err != nil {
+			log.Printf("Failed to save hash for %s: %v", cfg.TableName, err)
+		}
+		fmt.Printf("✅ Preprocessing complete. Output written to: %s\n", cfg.OutputParquet)
+	}
+	verboseLog("All parquet files ensured")
+}
+
+func updateConfigs(configDir string) error {
+	verboseLog("Reloading configs due to file system change")
+	newConfigs, err := LoadAllConfigs(configDir)
+	if err != nil {
+		log.Printf("Error reloading configs: %v", err)
+		return err
+	}
+
+	configsMu.Lock()
+	oldConfigs := currentConfigs
+	currentConfigs = newConfigs
+	configsMu.Unlock()
+
+	// Clear cache for removed/changed endpoints
+	arrowMu.Lock()
+	oldEndpoints := make(map[string]bool)
+	for _, cfg := range oldConfigs {
+		oldEndpoints[cfg.URLEndpoint] = true
+	}
+
+	newEndpoints := make(map[string]bool)
+	for _, cfg := range newConfigs {
+		newEndpoints[cfg.URLEndpoint] = true
+	}
+
+	// Remove cache entries for deleted endpoints
+	for endpoint := range oldEndpoints {
+		if !newEndpoints[endpoint] {
+			delete(arrowTables, endpoint)
+			verboseLog("Removed cache for deleted endpoint: %s", endpoint)
+		}
+	}
+	arrowMu.Unlock()
+
+	// Update HTTP endpoints
+	updateHTTPEndpoints(newConfigs)
+
+	// Process new/changed configs
+	ensureParquetFiles(newConfigs)
+
+	log.Printf("Successfully reloaded %d configs", len(newConfigs))
+	return nil
+}
+
+func updateHTTPEndpoints(configs []*config.Config) {
+	httpMuxMu.Lock()
+	defer httpMuxMu.Unlock()
+
+	// Create new mux
+	newMux := http.NewServeMux()
+
+	// Add handlers for all current configs
 	for _, cfg := range configs {
 		endpoint := cfg.URLEndpoint
 		currentCfg := cfg // Capture current config to avoid closure issue
-		http.HandleFunc(endpoint, func(w http.ResponseWriter, r *http.Request) {
+
+		newMux.HandleFunc(endpoint, func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if r := recover(); r != nil {
 					verboseLog("Panic in handler for %s: %v", endpoint, r)
@@ -274,60 +405,63 @@ func serveAPI(configs []*config.Config) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(records)
 		})
+
+		verboseLog("Registered endpoint: %s", endpoint)
 	}
-	fmt.Println("Serving API on :8080 ...")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+
+	httpMux = newMux
+	verboseLog("Updated HTTP endpoints with %d handlers", len(configs))
 }
 
-func ensureParquetFiles(configs []*config.Config) {
-	log.Printf("Ensuring parquet files are ready for %d configs", len(configs))
-	for _, cfg := range configs {
-		verboseLog("Checking config: %s", cfg.TableName)
-		parquetExists := false
-		if _, err := os.Stat(cfg.OutputParquet); err == nil {
-			parquetExists = true
-			verboseLog("Parquet file exists: %s", cfg.OutputParquet)
-		} else {
-			verboseLog("Parquet file does not exist: %s", cfg.OutputParquet)
-		}
-
-		currentHash, err := fileHash(cfg.InputCSV)
-		if err != nil {
-			log.Printf("Failed to hash CSV for config %s: %v", cfg.TableName, err)
-			continue
-		}
-
-		savedHash, err := readSavedHash(cfg.InputCSV)
-		if parquetExists && err == nil && savedHash == currentHash {
-			fmt.Printf("Parquet up-to-date for %s, skipping.\n", cfg.TableName)
-			verboseLog("Hash matches, skipping processing for %s", cfg.TableName)
-			continue
-		}
-
-		verboseLog("Hash differs or file missing, processing %s", cfg.TableName)
-
-		// Ensure output directory exists
-		outputDir := filepath.Dir(cfg.OutputParquet)
-		verboseLog("Creating output directory: %s", outputDir)
-		if err := os.MkdirAll(outputDir, 0755); err != nil {
-			log.Printf("Failed to create output directory for %s: %v", cfg.TableName, err)
-			continue
-		}
-
-		verboseLog("Starting preprocessing for %s", cfg.TableName)
-		processingStart := time.Now()
-		if err := processor.Preprocess(cfg); err != nil {
-			log.Printf("Preprocessing failed for %s: %v", cfg.TableName, err)
-			continue
-		}
-		verboseLog("Preprocessing completed in %v for %s", time.Since(processingStart), cfg.TableName)
-
-		if err := saveHash(cfg.InputCSV, currentHash); err != nil {
-			log.Printf("Failed to save hash for %s: %v", cfg.TableName, err)
-		}
-		fmt.Printf("✅ Preprocessing complete. Output written to: %s\n", cfg.OutputParquet)
+func watchConfigDir(configDir string) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Printf("Failed to create file watcher: %v", err)
+		return
 	}
-	verboseLog("All parquet files ensured")
+	defer watcher.Close()
+
+	err = watcher.Add(configDir)
+	if err != nil {
+		log.Printf("Failed to watch config directory: %v", err)
+		return
+	}
+
+	verboseLog("Started watching config directory: %s", configDir)
+
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+
+			verboseLog("Config file system event: %s %s", event.Op, event.Name)
+
+			// Only react to YAML file changes
+			if strings.HasSuffix(event.Name, ".yaml") || strings.HasSuffix(event.Name, ".yml") {
+				if event.Op&fsnotify.Write == fsnotify.Write ||
+					event.Op&fsnotify.Create == fsnotify.Create ||
+					event.Op&fsnotify.Remove == fsnotify.Remove {
+
+					log.Printf("Config change detected: %s", event.Name)
+
+					// Small delay to allow file operations to complete
+					time.Sleep(100 * time.Millisecond)
+
+					if err := updateConfigs(configDir); err != nil {
+						log.Printf("Failed to update configs: %v", err)
+					}
+				}
+			}
+
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			log.Printf("Config watcher error: %v", err)
+		}
+	}
 }
 
 func main() {
@@ -347,11 +481,21 @@ func main() {
 		log.Fatalf("Error loading configs: %v", err)
 	}
 
+	// Initialize current configs
+	configsMu.Lock()
+	currentConfigs = configs
+	configsMu.Unlock()
+
 	// Always ensure parquet files exist (whether serving or preprocessing)
 	ensureParquetFiles(configs)
 
 	if *serveFlag {
 		log.Printf("Starting in server mode with %d endpoints", len(configs))
+
+		// Start config file watcher in background
+		go watchConfigDir(configDir)
+
+		// Start the API server (this blocks)
 		serveAPI(configs)
 		return
 	}
