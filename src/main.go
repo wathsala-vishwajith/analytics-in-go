@@ -84,6 +84,7 @@ func LoadAllConfigs(configDir string) ([]*config.Config, error) {
 			log.Printf("Failed to load config %s: %v", path, err)
 			return nil
 		}
+		log.Printf("Loaded config %s", path)
 		configs = append(configs, cfg)
 		return nil
 	})
@@ -239,6 +240,14 @@ func main() {
 			fmt.Printf("Parquet up-to-date for %s, skipping.\n", cfg.TableName)
 			continue
 		}
+
+		// Ensure output directory exists
+		outputDir := filepath.Dir(cfg.OutputParquet)
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			log.Printf("Failed to create output directory for %s: %v", cfg.TableName, err)
+			continue
+		}
+
 		if err := processor.Preprocess(cfg); err != nil {
 			log.Printf("Preprocessing failed for %s: %v", cfg.TableName, err)
 			continue
