@@ -4,10 +4,11 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 
-	"go-data-preprocessor/config"
-	"go-data-preprocessor/model"
+	"analytics-in-go/src/config"
+	"analytics-in-go/src/model"
 )
 
 type AggregatedRow map[string]interface{}
@@ -43,39 +44,50 @@ func LoadCSV(path string) ([]model.Row, error) {
 }
 
 func Aggregate(rows []model.Row, cfg *config.Config) ([]AggregatedRow, error) {
+	// Group by columns without aggregate
+	var groupByCols []string
+	var aggCols []config.Column
+	for _, col := range cfg.Columns {
+		if col.Aggregate == "" {
+			groupByCols = append(groupByCols, col.Name)
+		} else {
+			aggCols = append(aggCols, col)
+		}
+	}
+
 	groupMap := make(map[string]AggregatedRow)
 
 	for _, row := range rows {
 		key := ""
-		for _, col := range cfg.GroupBy {
+		for _, col := range groupByCols {
 			key += row[col] + "|"
 		}
 
 		if _, exists := groupMap[key]; !exists {
 			groupMap[key] = make(AggregatedRow)
-			for _, col := range cfg.GroupBy {
+			for _, col := range groupByCols {
 				groupMap[key][col] = row[col]
 			}
 		}
 
 		result := groupMap[key]
-		for _, agg := range cfg.Aggregations {
-			switch agg.Operation {
+		for _, col := range aggCols {
+			switch col.Aggregate {
 			case "sum":
-				val, _ := strconv.ParseFloat(row[agg.Column], 64)
-				if curr, ok := result[agg.Name].(float64); ok {
-					result[agg.Name] = curr + val
+				val, _ := strconv.ParseFloat(row[col.Name], 64)
+				if curr, ok := result[col.Name].(float64); ok {
+					result[col.Name] = curr + val
 				} else {
-					result[agg.Name] = val
+					result[col.Name] = val
 				}
 			case "count":
-				if curr, ok := result[agg.Name].(int); ok {
-					result[agg.Name] = curr + 1
+				if curr, ok := result[col.Name].(int); ok {
+					result[col.Name] = curr + 1
 				} else {
-					result[agg.Name] = 1
+					result[col.Name] = 1
 				}
 			default:
-				return nil, fmt.Errorf("unsupported operation: %s", agg.Operation)
+				return nil, fmt.Errorf("unsupported aggregate: %s", col.Aggregate)
 			}
 		}
 	}
@@ -84,6 +96,33 @@ func Aggregate(rows []model.Row, cfg *config.Config) ([]AggregatedRow, error) {
 	var resultList []AggregatedRow
 	for _, v := range groupMap {
 		resultList = append(resultList, v)
+	}
+
+	// Sort if needed
+	if cfg.SortBy.Column != "" {
+		sort.Slice(resultList, func(i, j int) bool {
+			vi, vj := resultList[i][cfg.SortBy.Column], resultList[j][cfg.SortBy.Column]
+			if cfg.SortBy.Order == "desc" {
+				switch vi := vi.(type) {
+				case float64:
+					return vi > vj.(float64)
+				case int:
+					return vi > vj.(int)
+				case string:
+					return vi > vj.(string)
+				}
+			} else {
+				switch vi := vi.(type) {
+				case float64:
+					return vi < vj.(float64)
+				case int:
+					return vi < vj.(int)
+				case string:
+					return vi < vj.(string)
+				}
+			}
+			return false
+		})
 	}
 
 	return resultList, nil
