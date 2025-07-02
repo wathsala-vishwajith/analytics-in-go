@@ -1,0 +1,17 @@
+table_name: top_30_regions_by_revenue
+input_csv: ../data/raw/regions.csv
+output_parquet: ../data/processed/top_30_regions_by_revenue.parquet
+output_arrow: ../data/processed/top_30_regions_by_revenue.arrow
+columns:
+  - name: Region
+    type: string
+  - name: Total Revenue
+    type: float
+    aggregate: sum
+  - name: Items Sold
+    type: int
+    aggregate: sum
+sort_by:
+  column: Total Revenue
+  order: desc
+limit: 30 
