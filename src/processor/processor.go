@@ -9,6 +9,9 @@ import (
 
 	"analytics-in-go/src/config"
 	"analytics-in-go/src/model"
+
+	"github.com/xitongsys/parquet-go-source/local"
+	"github.com/xitongsys/parquet-go/writer"
 )
 
 type AggregatedRow map[string]interface{}
@@ -155,4 +158,46 @@ func Aggregate(rows []model.Row, cfg *config.Config) ([]AggregatedRow, error) {
 	}
 
 	return resultList, nil
+}
+
+func WriteParquet(outputPath string, data []AggregatedRow) error {
+	f, err := local.NewLocalFileWriter(outputPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	pw, err := writer.NewJSONWriter("record", f, 4)
+	if err != nil {
+		return err
+	}
+	defer pw.WriteStop()
+
+	for _, row := range data {
+		err := pw.Write(row)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func Preprocess(cfg *config.Config) error {
+	rows, err := LoadCSV(cfg.InputCSV)
+	if err != nil {
+		return fmt.Errorf("failed to load CSV: %w", err)
+	}
+
+	aggRows, err := Aggregate(rows, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to aggregate: %w", err)
+	}
+
+	err = WriteParquet(cfg.OutputParquet, aggRows)
+	if err != nil {
+		return fmt.Errorf("failed to write parquet: %w", err)
+	}
+
+	return nil
 }
