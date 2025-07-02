@@ -56,6 +56,9 @@ func Aggregate(rows []model.Row, cfg *config.Config) ([]AggregatedRow, error) {
 	}
 
 	groupMap := make(map[string]AggregatedRow)
+	// For avg, keep sum and count per group
+	avgSums := make(map[string]map[string]float64) // key -> col.Name -> sum
+	avgCounts := make(map[string]map[string]int)   // key -> col.Name -> count
 
 	for _, row := range rows {
 		key := ""
@@ -68,6 +71,8 @@ func Aggregate(rows []model.Row, cfg *config.Config) ([]AggregatedRow, error) {
 			for _, col := range groupByCols {
 				groupMap[key][col] = row[col]
 			}
+			avgSums[key] = make(map[string]float64)
+			avgCounts[key] = make(map[string]int)
 		}
 
 		result := groupMap[key]
@@ -86,8 +91,27 @@ func Aggregate(rows []model.Row, cfg *config.Config) ([]AggregatedRow, error) {
 				} else {
 					result[col.Name] = 1
 				}
+			case "avg":
+				val, _ := strconv.ParseFloat(row[col.Name], 64)
+				avgSums[key][col.Name] += val
+				avgCounts[key][col.Name]++
 			default:
 				return nil, fmt.Errorf("unsupported aggregate: %s", col.Aggregate)
+			}
+		}
+	}
+
+	// After processing all rows, compute averages
+	for key, row := range groupMap {
+		for _, col := range aggCols {
+			if col.Aggregate == "avg" {
+				sum := avgSums[key][col.Name]
+				count := avgCounts[key][col.Name]
+				if count > 0 {
+					row[col.Name] = sum / float64(count)
+				} else {
+					row[col.Name] = 0.0
+				}
 			}
 		}
 	}
