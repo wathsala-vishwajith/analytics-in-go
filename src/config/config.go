@@ -19,6 +19,7 @@ type SortBy struct {
 
 type Config struct {
 	TableName     string   `yaml:"table_name"`
+	Name          string   `yaml:"name"`
 	InputCSV      string   `yaml:"input_csv"`
 	OutputParquet string   `yaml:"output_parquet"`
 	OutputArrow   string   `yaml:"output_arrow"`

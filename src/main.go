@@ -495,6 +495,9 @@ func main() {
 		// Start config file watcher in background
 		go watchConfigDir(configDir)
 
+		// Start SSR server in background
+		go startSSRServer(configs)
+
 		// Start the API server (this blocks)
 		serveAPI(configs)
 		return

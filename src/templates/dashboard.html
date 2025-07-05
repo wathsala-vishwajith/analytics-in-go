@@ -1,0 +1,26 @@
+{{define "title"}}Analytics Dashboard{{end}}
+
+{{define "content"}}
+<div class="bg-white shadow overflow-hidden sm:rounded-lg">
+    <div class="px-4 py-5 sm:px-6">
+        <h3 class="text-lg leading-6 font-medium text-gray-900">Available Analytics</h3>
+        <p class="mt-1 max-w-2xl text-sm text-gray-500">Click on any metric to view detailed data.</p>
+    </div>
+    <div class="border-t border-gray-200">
+        <div class="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+            {{range .Configs}}
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="px-4 py-5 sm:p-6">
+                    <dt class="text-sm font-medium text-gray-500 truncate">{{.Name}}</dt>
+                    <dd class="mt-1 text-3xl font-semibold text-gray-900">
+                        <a href="/dashboard{{.URLEndpoint}}" class="text-indigo-600 hover:text-indigo-900">
+                            View Data
+                        </a>
+                    </dd>
+                </div>
+            </div>
+            {{end}}
+        </div>
+    </div>
+</div>
+{{end}}

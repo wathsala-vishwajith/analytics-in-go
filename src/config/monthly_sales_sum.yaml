@@ -2,6 +2,7 @@ table_name: monthly_sales_sum
 input_csv: data/raw/GO_test_5m.csv
 output_parquet: data/processed/monthly_sales_sum.parquet
 output_arrow: data/processed/monthly_sales_sum.arrow
+name: "Monthly Sales Sum"
 columns:
   - name: transaction_date
     type: string

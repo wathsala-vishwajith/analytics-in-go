@@ -1,4 +1,5 @@
 table_name: top_30_regions_by_revenue
+name: "Top 30 Regions by Revenue"
 input_csv: data/raw/GO_test_5m.csv
 output_parquet: data/processed/top_30_regions_by_revenue.parquet
 output_arrow: data/processed/top_30_regions_by_revenue.arrow

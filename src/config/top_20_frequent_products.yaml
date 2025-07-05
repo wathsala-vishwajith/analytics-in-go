@@ -2,6 +2,7 @@ table_name: top_20_frequent_products
 input_csv: data/raw/GO_test_5m.csv
 output_parquet: data/processed/top_20_frequent_products.parquet
 output_arrow: data/processed/top_20_frequent_products.arrow
+name: "Top 20 Frequent Products"
 columns:
   - name: product_name
     type: string

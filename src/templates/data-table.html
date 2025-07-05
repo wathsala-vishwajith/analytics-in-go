@@ -1,0 +1,38 @@
+{{define "title"}}{{.Name}} - Analytics{{end}}
+
+{{define "content"}}
+<div class="bg-white shadow overflow-hidden sm:rounded-lg">
+    <div class="px-4 py-5 sm:px-6">
+        <h3 class="text-lg leading-6 font-medium text-gray-900">{{.Name}}</h3>
+        <p class="mt-1 max-w-2xl text-sm text-gray-500">
+            Data from: {{.Config.InputCSV}}
+        </p>
+    </div>
+    <div class="border-t border-gray-200">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        {{range $key, $_ := index .Data 0}}
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            {{$key}}
+                        </th>
+                        {{end}}
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {{range .Data}}
+                    <tr>
+                        {{range $key, $value := .}}
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {{$value}}
+                        </td>
+                        {{end}}
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{{end}} 

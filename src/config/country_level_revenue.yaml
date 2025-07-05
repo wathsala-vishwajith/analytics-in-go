@@ -1,4 +1,5 @@
 table_name: country_level_revenue
+name: "Country Level Revenue"
 input_csv: data/raw/GO_test_5m.csv
 output_parquet: data/processed/country_level_revenue.parquet
 output_arrow: data/processed/country_level_revenue.arrow
