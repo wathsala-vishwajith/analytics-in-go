@@ -1,38 +1,66 @@
-{{define "title"}}{{.Name}} - Analytics{{end}}
-
-{{define "content"}}
-<div class="bg-white shadow overflow-hidden sm:rounded-lg">
-    <div class="px-4 py-5 sm:px-6">
-        <h3 class="text-lg leading-6 font-medium text-gray-900">{{.Name}}</h3>
-        <p class="mt-1 max-w-2xl text-sm text-gray-500">
-            Data from: {{.Config.InputCSV}}
-        </p>
-    </div>
-    <div class="border-t border-gray-200">
-        <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
-                    <tr>
-                        {{range $key, $_ := index .Data 0}}
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            {{$key}}
-                        </th>
-                        {{end}}
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-200">
-                    {{range .Data}}
-                    <tr>
-                        {{range $key, $value := .}}
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {{$value}}
-                        </td>
-                        {{end}}
-                    </tr>
-                    {{end}}
-                </tbody>
-            </table>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Name}} - Analytics</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body class="bg-gray-100">
+    <nav class="bg-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between h-16">
+                <div class="flex">
+                    <div class="flex-shrink-0 flex items-center">
+                        <a href="/" class="text-xl font-bold text-gray-800">Analytics Dashboard</a>
+                    </div>
+                    <div class="hidden md:ml-6 md:flex md:space-x-8">
+                        <a href="/" class="inline-flex items-center px-1 pt-1 text-gray-500 hover:text-gray-700">Home</a>
+                        <a href="/dashboard" class="inline-flex items-center px-1 pt-1 text-gray-500 hover:text-gray-700">Dashboard</a>
+                    </div>
+                </div>
+            </div>
         </div>
-    </div>
-</div>
-{{end}} 
+    </nav>
+
+    <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <div class="bg-white shadow overflow-hidden sm:rounded-lg">
+            <div class="px-4 py-5 sm:px-6">
+                <h3 class="text-lg leading-6 font-medium text-gray-900">{{.Name}}</h3>
+                <p class="mt-1 max-w-2xl text-sm text-gray-500">
+                    Data from: {{.Config.InputCSV}}
+                </p>
+            </div>
+            <div class="border-t border-gray-200">
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                {{range $key, $_ := index .Data 0}}
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    {{$key}}
+                                </th>
+                                {{end}}
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            {{range .Data}}
+                            <tr>
+                                {{range $key, $value := .}}
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    {{$value}}
+                                </td>
+                                {{end}}
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html> 

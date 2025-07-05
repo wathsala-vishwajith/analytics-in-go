@@ -12,4 +12,11 @@ columns:
 sort_by:
   column: total_price
   order: desc
-url_endpoint: /api/monthly-sales-sum 
+api_endpoint: /api/monthly-sales-sum
+url_endpoint: /monthly-sales-sum
+view:
+  type: "line_chart"
+  title: "Monthly Sales Trend"
+  x_axis: "transaction_date"
+  y_axis: "total_price"
+  description: "Sales trend over time"

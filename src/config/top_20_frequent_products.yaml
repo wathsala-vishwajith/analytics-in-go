@@ -15,4 +15,11 @@ sort_by:
   column: quantity
   order: desc
 limit: 20
-url_endpoint: /api/top-20-frequent-products 
+api_endpoint: /api/top-20-frequent-products
+url_endpoint: /top-20-frequent-products
+view:
+  type: "bar_chart"
+  title: "Top 20 Most Frequent Products"
+  x_axis: "product_name"
+  y_axis: "quantity"
+  description: "Product popularity by quantity sold"

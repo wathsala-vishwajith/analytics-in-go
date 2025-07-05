@@ -1,26 +1,60 @@
-{{define "title"}}Analytics Dashboard{{end}}
-
-{{define "content"}}
-<div class="bg-white shadow overflow-hidden sm:rounded-lg">
-    <div class="px-4 py-5 sm:px-6">
-        <h3 class="text-lg leading-6 font-medium text-gray-900">Available Analytics</h3>
-        <p class="mt-1 max-w-2xl text-sm text-gray-500">Click on any metric to view detailed data.</p>
-    </div>
-    <div class="border-t border-gray-200">
-        <div class="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-            {{range .Configs}}
-            <div class="bg-white overflow-hidden shadow rounded-lg">
-                <div class="px-4 py-5 sm:p-6">
-                    <dt class="text-sm font-medium text-gray-500 truncate">{{.Name}}</dt>
-                    <dd class="mt-1 text-3xl font-semibold text-gray-900">
-                        <a href="/dashboard{{.URLEndpoint}}" class="text-indigo-600 hover:text-indigo-900">
-                            View Data
-                        </a>
-                    </dd>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analytics Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body class="bg-gray-100">
+    <nav class="bg-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between h-16">
+                <div class="flex">
+                    <div class="flex-shrink-0 flex items-center">
+                        <a href="/" class="text-xl font-bold text-gray-800">Analytics Dashboard</a>
+                    </div>
+                    <div class="hidden md:ml-6 md:flex md:space-x-8">
+                        <a href="/" class="inline-flex items-center px-1 pt-1 text-gray-500 hover:text-gray-700">Home</a>
+                        <a href="/dashboard" class="inline-flex items-center px-1 pt-1 text-gray-500 hover:text-gray-700">Dashboard</a>
+                    </div>
                 </div>
             </div>
-            {{end}}
         </div>
-    </div>
-</div>
-{{end}}
+    </nav>
+
+    <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <div class="bg-white shadow overflow-hidden sm:rounded-lg">
+            <div class="px-4 py-5 sm:px-6">
+                <h3 class="text-lg leading-6 font-medium text-gray-900">Available Analytics</h3>
+                <p class="mt-1 max-w-2xl text-sm text-gray-500">Click on any metric to view detailed data.</p>
+            </div>
+            <div class="border-t border-gray-200">
+                <div class="bg-gray-50 px-4 py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+                    {{range .Configs}}
+                    <div class="bg-white overflow-hidden shadow rounded-lg">
+                        <div class="px-4 py-5 sm:p-6">
+                            <dt class="text-sm font-medium text-gray-500 truncate">{{.Name}}</dt>
+                            <dd class="mt-1 text-lg font-semibold text-gray-900">
+                                <a href="/dashboard{{.URLEndpoint}}" class="text-indigo-600 hover:text-indigo-900">
+                                    {{.View.Title}}
+                                </a>
+                            </dd>
+                            <div class="mt-2 flex items-center text-sm text-gray-500">
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {{if eq .View.Type "table"}}bg-blue-100 text-blue-800{{else if eq .View.Type "bar_chart"}}bg-green-100 text-green-800{{else if eq .View.Type "pie_chart"}}bg-purple-100 text-purple-800{{else if eq .View.Type "line_chart"}}bg-yellow-100 text-yellow-800{{else}}bg-gray-100 text-gray-800{{end}}">
+                                    {{if eq .View.Type "table"}}📊 Table{{else if eq .View.Type "bar_chart"}}📊 Bar Chart{{else if eq .View.Type "pie_chart"}}🥧 Pie Chart{{else if eq .View.Type "line_chart"}}📈 Line Chart{{else}}📊 {{.View.Type}}{{end}}
+                                </span>
+                            </div>
+                            <p class="mt-1 text-sm text-gray-500">{{.View.Description}}</p>
+                        </div>
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

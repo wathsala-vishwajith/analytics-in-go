@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Config.View.Title}} - Analytics</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/main.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100">
+    <nav class="bg-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between h-16">
+                <div class="flex">
+                    <div class="flex-shrink-0 flex items-center">
+                        <a href="/" class="text-xl font-bold text-gray-800">Analytics Dashboard</a>
+                    </div>
+                    <div class="hidden md:ml-6 md:flex md:space-x-8">
+                        <a href="/" class="inline-flex items-center px-1 pt-1 text-gray-500 hover:text-gray-700">Home</a>
+                        <a href="/dashboard" class="inline-flex items-center px-1 pt-1 text-gray-500 hover:text-gray-700">Dashboard</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <!-- Header -->
+        <div class="md:flex md:items-center md:justify-between mb-6">
+            <div class="flex-1 min-w-0">
+                <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl sm:truncate">
+                    {{.Config.View.Title}}
+                </h2>
+                <p class="mt-1 text-sm text-gray-500">
+                    {{.Config.View.Description}}
+                </p>
+            </div>
+            <div class="mt-4 flex md:mt-0 md:ml-4">
+                <button id="refreshBtn" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    <svg class="-ml-1 mr-2 h-5 w-5 text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                    </svg>
+                    Refresh
+                </button>
+                <div class="ml-3">
+                    <select id="viewTypeSelector" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        <option value="table" {{if eq .Config.View.Type "table"}}selected{{end}}>Table View</option>
+                        <option value="bar_chart" {{if eq .Config.View.Type "bar_chart"}}selected{{end}}>Bar Chart</option>
+                        <option value="pie_chart" {{if eq .Config.View.Type "pie_chart"}}selected{{end}}>Pie Chart</option>
+                        <option value="line_chart" {{if eq .Config.View.Type "line_chart"}}selected{{end}}>Line Chart</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loadingState" class="hidden">
+            <div class="bg-white shadow overflow-hidden sm:rounded-lg">
+                <div class="px-4 py-8 text-center">
+                    <svg class="animate-spin -ml-1 mr-3 h-8 w-8 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <p class="mt-2 text-gray-600">Loading data...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error State -->
+        <div id="errorState" class="hidden">
+            <div class="bg-red-50 border border-red-200 rounded-md p-4">
+                <div class="flex">
+                    <div class="flex-shrink-0">
+                        <svg class="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                        </svg>
+                    </div>
+                    <div class="ml-3">
+                        <h3 class="text-sm font-medium text-red-800">Error loading data</h3>
+                        <p id="errorMessage" class="mt-1 text-sm text-red-700"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Container -->
+        <div id="dataContainer" class="bg-white shadow overflow-hidden sm:rounded-lg">
+            <!-- Table View -->
+            <div id="tableView" class="hidden">
+                <!-- Stats Summary -->
+                <div class="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div class="text-sm text-gray-600">
+                            Showing <span id="currentRange"></span> of <span id="totalRecords"></span> records
+                        </div>
+                        <div class="text-sm text-gray-600">
+                            Total: <span id="totalValue" class="font-semibold text-green-600"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Table -->
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50" id="tableHeader">
+                            <!-- Dynamic headers will be generated -->
+                        </thead>
+                        <tbody id="tableBody" class="bg-white divide-y divide-gray-200">
+                            <!-- Data will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
+                    <div class="flex-1 flex justify-between sm:hidden">
+                        <button id="prevPageMobile" class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50" onclick="changePage(-1)">
+                            Previous
+                        </button>
+                        <button id="nextPageMobile" class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50" onclick="changePage(1)">
+                            Next
+                        </button>
+                    </div>
+                    <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                        <div>
+                            <p class="text-sm text-gray-700">
+                                Page <span id="currentPage" class="font-medium">1</span> of <span id="totalPages" class="font-medium">1</span>
+                            </p>
+                        </div>
+                        <div>
+                            <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                                <button id="prevPage" onclick="changePage(-1)" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                                    <span class="sr-only">Previous</span>
+                                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" />
+                                    </svg>
+                                </button>
+                                <div id="pageNumbers" class="hidden sm:flex">
+                                    <!-- Page numbers will be generated here -->
+                                </div>
+                                <button id="nextPage" onclick="changePage(1)" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                                    <span class="sr-only">Next</span>
+                                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+                                    </svg>
+                                </button>
+                            </nav>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chart View -->
+            <div id="chartView" class="hidden">
+                <div class="p-6">
+                    <canvas id="dataChart" width="400" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Configuration from server
+        const config = {
+            name: "{{.Config.Name}}",
+            apiEndpoint: "{{.Config.APIEndpoint}}",
+            view: {
+                type: "{{.Config.View.Type}}",
+                title: "{{.Config.View.Title}}",
+                xAxis: "{{.Config.View.XAxis}}",
+                yAxis: "{{.Config.View.YAxis}}",
+                description: "{{.Config.View.Description}}"
+            }
+        };
+
+        // Global state
+        let currentData = [];
+        let filteredData = [];
+        let currentPage = 1;
+        let recordsPerPage = 10;
+        let sortField = config.view.yAxis || '';
+        let sortDirection = 'desc';
+        let currentViewType = config.view.type;
+        let chart = null;
+
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', function() {
+            loadData();
+            
+            // Event listeners
+            document.getElementById('refreshBtn').addEventListener('click', loadData);
+            document.getElementById('viewTypeSelector').addEventListener('change', function(e) {
+                currentViewType = e.target.value;
+                renderView();
+            });
+        });
+
+        // Load data from API
+        async function loadData() {
+            showLoading();
+            
+            try {
+                const response = await fetch(`http://localhost:8080${config.apiEndpoint}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                currentData = data;
+                filteredData = [...data];
+                
+                // Sort by default field
+                if (sortField) {
+                    sortData(sortField, sortDirection);
+                }
+                
+                hideLoading();
+                renderView();
+                
+            } catch (error) {
+                hideLoading();
+                showError('Failed to load data: ' + error.message);
+                console.error('Error loading data:', error);
+            }
+        }
+
+        // Show/Hide loading states
+        function showLoading() {
+            document.getElementById('loadingState').classList.remove('hidden');
+            document.getElementById('errorState').classList.add('hidden');
+            document.getElementById('dataContainer').classList.add('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingState').classList.add('hidden');
+            document.getElementById('dataContainer').classList.remove('hidden');
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorState').classList.remove('hidden');
+            document.getElementById('dataContainer').classList.add('hidden');
+        }
+
+        // Render view based on current type
+        function renderView() {
+            if (currentViewType === 'table') {
+                renderTable();
+            } else {
+                renderChart();
+            }
+        }
+
+        // Render table view
+        function renderTable() {
+            document.getElementById('tableView').classList.remove('hidden');
+            document.getElementById('chartView').classList.add('hidden');
+            
+            if (chart) {
+                chart.destroy();
+                chart = null;
+            }
+            
+            generateTableHeaders();
+            renderTableData();
+            updateStats();
+            updatePagination();
+        }
+
+        // Generate table headers dynamically
+        function generateTableHeaders() {
+            const tableHeader = document.getElementById('tableHeader');
+            if (filteredData.length === 0) return;
+            
+            const headers = Object.keys(filteredData[0]);
+            tableHeader.innerHTML = `
+                <tr>
+                    ${headers.map(header => `
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onclick="sortTable('${header}')">
+                            ${formatHeaderName(header)}
+                            <span id="${header}-sort" class="ml-1">${header === sortField ? (sortDirection === 'asc' ? '↑' : '↓') : ''}</span>
+                        </th>
+                    `).join('')}
+                </tr>
+            `;
+        }
+
+        // Format header names
+        function formatHeaderName(name) {
+            return name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+
+        // Render table data
+        function renderTableData() {
+            const tbody = document.getElementById('tableBody');
+            const start = (currentPage - 1) * recordsPerPage;
+            const end = start + recordsPerPage;
+            const pageData = filteredData.slice(start, end);
+            
+            tbody.innerHTML = '';
+            
+            pageData.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-50';
+                
+                const cells = Object.entries(row).map(([key, value]) => {
+                    let formattedValue = value;
+                    if (key === config.view.yAxis && typeof value === 'number') {
+                        formattedValue = '$' + formatNumber(value);
+                    } else if (typeof value === 'number') {
+                        formattedValue = formatNumber(value);
+                    }
+                    
+                    return `<td class="px-6 py-4 whitespace-nowrap text-sm ${key === config.view.yAxis ? 'font-semibold text-gray-900' : 'text-gray-500'}">${escapeHtml(formattedValue || '')}</td>`;
+                }).join('');
+                
+                tr.innerHTML = cells;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Render chart view
+        function renderChart() {
+            document.getElementById('tableView').classList.add('hidden');
+            document.getElementById('chartView').classList.remove('hidden');
+            
+            if (chart) {
+                chart.destroy();
+            }
+            
+            const ctx = document.getElementById('dataChart').getContext('2d');
+            const chartData = prepareChartData();
+            
+            chart = new Chart(ctx, {
+                type: getChartType(),
+                data: chartData,
+                options: getChartOptions()
+            });
+        }
+
+        // Get Chart.js chart type
+        function getChartType() {
+            switch (currentViewType) {
+                case 'bar_chart': return 'bar';
+                case 'pie_chart': return 'pie';
+                case 'line_chart': return 'line';
+                default: return 'bar';
+            }
+        }
+
+        // Prepare data for charts
+        function prepareChartData() {
+            const labels = filteredData.slice(0, 20).map(item => item[config.view.xAxis] || '');
+            const values = filteredData.slice(0, 20).map(item => parseFloat(item[config.view.yAxis]) || 0);
+            
+            let backgroundColor, borderColor;
+            
+            if (currentViewType === 'pie_chart') {
+                backgroundColor = generateColors(labels.length);
+                borderColor = backgroundColor.map(color => color.replace('0.8', '1'));
+            } else {
+                backgroundColor = 'rgba(99, 102, 241, 0.8)';
+                borderColor = 'rgba(99, 102, 241, 1)';
+            }
+            
+            return {
+                labels: labels,
+                datasets: [{
+                    label: formatHeaderName(config.view.yAxis),
+                    data: values,
+                    backgroundColor: backgroundColor,
+                    borderColor: borderColor,
+                    borderWidth: 1
+                }]
+            };
+        }
+
+        // Generate colors for pie chart
+        function generateColors(count) {
+            const colors = [
+                'rgba(99, 102, 241, 0.8)',
+                'rgba(34, 197, 94, 0.8)',
+                'rgba(249, 115, 22, 0.8)',
+                'rgba(239, 68, 68, 0.8)',
+                'rgba(168, 85, 247, 0.8)',
+                'rgba(6, 182, 212, 0.8)',
+                'rgba(245, 158, 11, 0.8)',
+                'rgba(236, 72, 153, 0.8)'
+            ];
+            
+            return Array.from({length: count}, (_, i) => colors[i % colors.length]);
+        }
+
+        // Chart options
+        function getChartOptions() {
+            const baseOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: config.view.title
+                    }
+                }
+            };
+
+            if (currentViewType === 'pie_chart') {
+                return {
+                    ...baseOptions,
+                    plugins: {
+                        ...baseOptions.plugins,
+                        legend: {
+                            position: 'right'
+                        }
+                    }
+                };
+            }
+
+            return {
+                ...baseOptions,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: formatHeaderName(config.view.yAxis)
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: formatHeaderName(config.view.xAxis)
+                        }
+                    }
+                }
+            };
+        }
+
+        // Sort functions
+        function sortData(field, direction) {
+            filteredData.sort((a, b) => {
+                let aVal = a[field];
+                let bVal = b[field];
+                
+                if (typeof aVal === 'string' && !isNaN(parseFloat(aVal))) {
+                    aVal = parseFloat(aVal);
+                }
+                if (typeof bVal === 'string' && !isNaN(parseFloat(bVal))) {
+                    bVal = parseFloat(bVal);
+                }
+                
+                if (direction === 'asc') {
+                    return aVal > bVal ? 1 : -1;
+                } else {
+                    return aVal < bVal ? 1 : -1;
+                }
+            });
+        }
+
+        function sortTable(field) {
+            if (sortField === field) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortDirection = (typeof filteredData[0][field] === 'number') ? 'desc' : 'asc';
+            }
+            
+            sortField = field;
+            currentPage = 1;
+            
+            document.querySelectorAll('[id$="-sort"]').forEach(el => el.textContent = '');
+            document.getElementById(field + '-sort').textContent = sortDirection === 'asc' ? '↑' : '↓';
+            
+            sortData(field, sortDirection);
+            renderTableData();
+            updatePagination();
+        }
+
+        // Statistics and pagination functions
+        function updateStats() {
+            const totalRecords = filteredData.length;
+            const start = (currentPage - 1) * recordsPerPage + 1;
+            const end = Math.min(currentPage * recordsPerPage, totalRecords);
+            
+            document.getElementById('totalRecords').textContent = totalRecords.toLocaleString();
+            document.getElementById('currentRange').textContent = totalRecords > 0 ? `${start}-${end}` : '0';
+            
+            const totalValue = filteredData.reduce((sum, row) => sum + (parseFloat(row[config.view.yAxis]) || 0), 0);
+            document.getElementById('totalValue').textContent = '$' + formatNumber(totalValue);
+        }
+
+        function updatePagination() {
+            const totalPages = Math.ceil(filteredData.length / recordsPerPage);
+            
+            document.getElementById('currentPage').textContent = currentPage;
+            document.getElementById('totalPages').textContent = totalPages;
+            
+            const prevButtons = ['prevPage', 'prevPageMobile'];
+            const nextButtons = ['nextPage', 'nextPageMobile'];
+            
+            prevButtons.forEach(id => {
+                const btn = document.getElementById(id);
+                btn.disabled = currentPage <= 1;
+                btn.classList.toggle('opacity-50', currentPage <= 1);
+                btn.classList.toggle('cursor-not-allowed', currentPage <= 1);
+            });
+            
+            nextButtons.forEach(id => {
+                const btn = document.getElementById(id);
+                btn.disabled = currentPage >= totalPages;
+                btn.classList.toggle('opacity-50', currentPage >= totalPages);
+                btn.classList.toggle('cursor-not-allowed', currentPage >= totalPages);
+            });
+            
+            generatePageNumbers(totalPages);
+        }
+
+        function generatePageNumbers(totalPages) {
+            const pageNumbers = document.getElementById('pageNumbers');
+            pageNumbers.innerHTML = '';
+            
+            let startPage = Math.max(1, currentPage - 2);
+            let endPage = Math.min(totalPages, startPage + 4);
+            
+            if (endPage - startPage < 4) {
+                startPage = Math.max(1, endPage - 4);
+            }
+            
+            for (let i = startPage; i <= endPage; i++) {
+                const button = document.createElement('button');
+                button.className = `relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                    i === currentPage 
+                        ? 'z-10 bg-indigo-50 border-indigo-500 text-indigo-600'
+                        : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                }`;
+                button.textContent = i;
+                button.onclick = () => goToPage(i);
+                pageNumbers.appendChild(button);
+            }
+        }
+
+        function changePage(direction) {
+            const totalPages = Math.ceil(filteredData.length / recordsPerPage);
+            const newPage = currentPage + direction;
+            
+            if (newPage >= 1 && newPage <= totalPages) {
+                goToPage(newPage);
+            }
+        }
+
+        function goToPage(page) {
+            currentPage = page;
+            renderTableData();
+            updateStats();
+            updatePagination();
+        }
+
+        // Utility functions
+        function formatNumber(num) {
+            return parseFloat(num).toLocaleString('en-US', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            });
+        }
+
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.toString().replace(/[&<>"']/g, m => map[m]);
+        }
+    </script>
+</body>
+</html> 

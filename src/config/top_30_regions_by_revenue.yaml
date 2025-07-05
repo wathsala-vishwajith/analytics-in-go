@@ -16,4 +16,11 @@ sort_by:
   column: total_price
   order: desc
 limit: 30
-url_endpoint: /api/top-30-regions-by-revenue 
+api_endpoint: /api/top-30-regions-by-revenue
+url_endpoint: /top-30-regions-by-revenue
+view:
+  type: "pie_chart"
+  title: "Revenue Distribution by Region"
+  x_axis: "region"
+  y_axis: "total_price"
+  description: "Regional revenue distribution"

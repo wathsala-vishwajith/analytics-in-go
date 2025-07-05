@@ -17,4 +17,11 @@ columns:
 sort_by:
   column: total_price
   order: desc
-url_endpoint: /api/country-level-revenue 
+api_endpoint: /api/country-level-revenue
+url_endpoint: /country-level-revenue
+view:
+  type: "table"
+  title: "Country Level Revenue Analysis"
+  x_axis: "country"
+  y_axis: "total_price"
+  description: "Revenue breakdown by country and product"

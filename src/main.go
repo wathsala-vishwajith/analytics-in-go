@@ -347,10 +347,21 @@ func updateHTTPEndpoints(configs []*config.Config) {
 
 	// Add handlers for all current configs
 	for _, cfg := range configs {
-		endpoint := cfg.URLEndpoint
+		endpoint := cfg.APIEndpoint
 		currentCfg := cfg // Capture current config to avoid closure issue
 
 		newMux.HandleFunc(endpoint, func(w http.ResponseWriter, r *http.Request) {
+			// Add CORS headers
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+			// Handle preflight OPTIONS request
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
 			defer func() {
 				if r := recover(); r != nil {
 					verboseLog("Panic in handler for %s: %v", endpoint, r)
