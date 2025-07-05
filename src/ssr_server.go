@@ -81,25 +81,15 @@ func startSSRServer(configs []*config.Config) {
 		})
 	})
 
-	// Dashboard endpoints for each config
+	// Dashboard endpoints for each config with dynamic view rendering
 	for _, cfg := range configs {
 		currentCfg := cfg
 
 		// Dashboard endpoint - using the URL endpoint path
 		e.GET("/dashboard"+currentCfg.URLEndpoint, func(c echo.Context) error {
-			// Extract the endpoint from the URL to match the existing API
-			endpoint := currentCfg.URLEndpoint
-
-			tbl, err := getTable(endpoint, currentCfg)
-			if err != nil {
-				return echo.NewHTTPError(http.StatusInternalServerError, "Data not loaded: "+err.Error())
-			}
-
-			records := convertTableToRecords(tbl)
-			return c.Render(http.StatusOK, "data-table.html", map[string]interface{}{
-				"Name":   currentCfg.Name,
+			// Use dynamic template for all views
+			return c.Render(http.StatusOK, "dynamic-view.html", map[string]interface{}{
 				"Config": currentCfg,
-				"Data":   records,
 			})
 		})
 	}
