@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +35,17 @@ type TableCache struct {
 	Table      arrow.Table
 	LoadedAt   time.Time
 	AccessedAt time.Time
+}
+
+// PaginatedResponse represents a paginated API response
+type PaginatedResponse struct {
+	Data       []map[string]interface{} `json:"data"`
+	Total      int                      `json:"total"`
+	Page       int                      `json:"page"`
+	Limit      int                      `json:"limit"`
+	TotalPages int                      `json:"total_pages"`
+	HasNext    bool                     `json:"has_next"`
+	HasPrev    bool                     `json:"has_prev"`
 }
 
 var (
@@ -370,6 +383,36 @@ func updateHTTPEndpoints(configs []*config.Config) {
 			}()
 
 			verboseLog("Handling request for endpoint: %s", endpoint)
+
+			// Parse query parameters
+			query := r.URL.Query()
+			page := 1
+			limit := 10
+			sortField := ""
+			sortOrder := "desc"
+
+			if p := query.Get("page"); p != "" {
+				if parsedPage, err := strconv.Atoi(p); err == nil && parsedPage > 0 {
+					page = parsedPage
+				}
+			}
+
+			if l := query.Get("limit"); l != "" {
+				if parsedLimit, err := strconv.Atoi(l); err == nil && parsedLimit > 0 && parsedLimit <= 1000 {
+					limit = parsedLimit
+				}
+			}
+
+			if s := query.Get("sort"); s != "" {
+				sortField = s
+			}
+
+			if o := query.Get("order"); o != "" && (o == "asc" || o == "desc") {
+				sortOrder = o
+			}
+
+			verboseLog("Pagination params - page: %d, limit: %d, sort: %s, order: %s", page, limit, sortField, sortOrder)
+
 			tbl, err := getTable(endpoint, currentCfg)
 			if err != nil {
 				verboseLog("Failed to get table for %s: %v", endpoint, err)
@@ -380,7 +423,7 @@ func updateHTTPEndpoints(configs []*config.Config) {
 			verboseLog("Got table with %d rows and %d columns", tbl.NumRows(), tbl.NumCols())
 
 			// Convert Arrow Table to JSON (array of maps)
-			records := make([]map[string]interface{}, 0)
+			allRecords := make([]map[string]interface{}, 0)
 			for i := int64(0); i < tbl.NumRows(); i++ {
 				row := make(map[string]interface{})
 				for j, col := range tbl.Schema().Fields() {
@@ -409,12 +452,78 @@ func updateHTTPEndpoints(configs []*config.Config) {
 						row[col.Name] = nil
 					}
 				}
-				records = append(records, row)
+				allRecords = append(allRecords, row)
 			}
 
-			verboseLog("Successfully converted %d records to JSON", len(records))
+			// Sort records if sortField is specified
+			if sortField != "" {
+				sort.Slice(allRecords, func(i, j int) bool {
+					iVal := allRecords[i][sortField]
+					jVal := allRecords[j][sortField]
+
+					// Handle different data types
+					switch v := iVal.(type) {
+					case string:
+						if jStr, ok := jVal.(string); ok {
+							if sortOrder == "asc" {
+								return v < jStr
+							}
+							return v > jStr
+						}
+					case int64:
+						if jInt, ok := jVal.(int64); ok {
+							if sortOrder == "asc" {
+								return v < jInt
+							}
+							return v > jInt
+						}
+					case float64:
+						if jFloat, ok := jVal.(float64); ok {
+							if sortOrder == "asc" {
+								return v < jFloat
+							}
+							return v > jFloat
+						}
+					}
+					return false
+				})
+			}
+
+			// Calculate pagination
+			total := len(allRecords)
+			totalPages := (total + limit - 1) / limit
+			start := (page - 1) * limit
+			end := start + limit
+
+			if start > total {
+				start = total
+			}
+			if end > total {
+				end = total
+			}
+
+			// Get paginated data
+			var paginatedData []map[string]interface{}
+			if start < total {
+				paginatedData = allRecords[start:end]
+			} else {
+				paginatedData = []map[string]interface{}{}
+			}
+
+			// Create paginated response
+			response := PaginatedResponse{
+				Data:       paginatedData,
+				Total:      total,
+				Page:       page,
+				Limit:      limit,
+				TotalPages: totalPages,
+				HasNext:    page < totalPages,
+				HasPrev:    page > 1,
+			}
+
+			verboseLog("Successfully converted %d total records, returning %d records for page %d", total, len(paginatedData), page)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(records)
+			json.NewEncoder(w).Encode(response)
 		})
 
 		verboseLog("Registered endpoint: %s", endpoint)

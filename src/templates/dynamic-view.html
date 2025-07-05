@@ -183,6 +183,8 @@
         let sortDirection = 'desc';
         let currentViewType = config.view.type;
         let chart = null;
+        let totalRecords = 0;
+        let totalPages = 0;
 
         // Initialize page
         document.addEventListener('DOMContentLoaded', function() {
@@ -201,18 +203,34 @@
             showLoading();
             
             try {
-                const response = await fetch(`http://localhost:8080${config.apiEndpoint}`);
+                // Build URL with pagination parameters
+                const params = new URLSearchParams({
+                    page: currentPage,
+                    limit: recordsPerPage,
+                    sort: sortField || config.view.yAxis,
+                    order: sortDirection
+                });
+                
+                const response = await fetch(`http://localhost:8080${config.apiEndpoint}?${params}`);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 
-                const data = await response.json();
-                currentData = data;
-                filteredData = [...data];
+                const paginatedResponse = await response.json();
                 
-                // Sort by default field
-                if (sortField) {
-                    sortData(sortField, sortDirection);
+                // Handle both paginated and non-paginated responses for backward compatibility
+                if (paginatedResponse.data) {
+                    // New paginated response
+                    currentData = paginatedResponse.data;
+                    filteredData = [...paginatedResponse.data];
+                    totalRecords = paginatedResponse.total;
+                    totalPages = paginatedResponse.total_pages;
+                } else {
+                    // Legacy non-paginated response
+                    currentData = paginatedResponse;
+                    filteredData = [...paginatedResponse];
+                    totalRecords = paginatedResponse.length;
+                    totalPages = Math.ceil(totalRecords / recordsPerPage);
                 }
                 
                 hideLoading();
@@ -294,13 +312,10 @@
         // Render table data
         function renderTableData() {
             const tbody = document.getElementById('tableBody');
-            const start = (currentPage - 1) * recordsPerPage;
-            const end = start + recordsPerPage;
-            const pageData = filteredData.slice(start, end);
             
             tbody.innerHTML = '';
             
-            pageData.forEach(row => {
+            filteredData.forEach(row => {
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-gray-50';
                 
@@ -569,64 +584,44 @@
             };
         }
 
-        // Sort functions
-        function sortData(field, direction) {
-            filteredData.sort((a, b) => {
-                let aVal = a[field];
-                let bVal = b[field];
-                
-                if (typeof aVal === 'string' && !isNaN(parseFloat(aVal))) {
-                    aVal = parseFloat(aVal);
-                }
-                if (typeof bVal === 'string' && !isNaN(parseFloat(bVal))) {
-                    bVal = parseFloat(bVal);
-                }
-                
-                if (direction === 'asc') {
-                    return aVal > bVal ? 1 : -1;
-                } else {
-                    return aVal < bVal ? 1 : -1;
-                }
-            });
-        }
-
+        // Sort table by column
         function sortTable(field) {
+            // Toggle direction if same field, otherwise default to desc for numeric, asc for text
             if (sortField === field) {
                 sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
             } else {
-                sortDirection = (typeof filteredData[0][field] === 'number') ? 'desc' : 'asc';
+                sortDirection = (field === 'total_price' || field === 'quantity') ? 'desc' : 'asc';
             }
             
             sortField = field;
-            currentPage = 1;
+            currentPage = 1; // Reset to first page when sorting
             
+            // Update sort indicators
             document.querySelectorAll('[id$="-sort"]').forEach(el => el.textContent = '');
             document.getElementById(field + '-sort').textContent = sortDirection === 'asc' ? '↑' : '↓';
             
-            sortData(field, sortDirection);
-            renderTableData();
-            updatePagination();
+            // Reload data with new sort parameters
+            loadData();
         }
 
         // Statistics and pagination functions
         function updateStats() {
-            const totalRecords = filteredData.length;
             const start = (currentPage - 1) * recordsPerPage + 1;
             const end = Math.min(currentPage * recordsPerPage, totalRecords);
             
             document.getElementById('totalRecords').textContent = totalRecords.toLocaleString();
             document.getElementById('currentRange').textContent = totalRecords > 0 ? `${start}-${end}` : '0';
             
-            const totalValue = filteredData.reduce((sum, row) => sum + (parseFloat(row[config.view.yAxis]) || 0), 0);
-            document.getElementById('totalValue').textContent = '$' + formatNumber(totalValue);
+            // Calculate total value for current page only (since we have server-side pagination)
+            const currentPageTotal = filteredData.reduce((sum, row) => sum + (parseFloat(row[config.view.yAxis]) || 0), 0);
+            document.getElementById('totalValue').textContent = '$' + formatNumber(currentPageTotal);
         }
 
         function updatePagination() {
-            const totalPages = Math.ceil(filteredData.length / recordsPerPage);
-            
             document.getElementById('currentPage').textContent = currentPage;
             document.getElementById('totalPages').textContent = totalPages;
             
+            // Enable/disable navigation buttons
             const prevButtons = ['prevPage', 'prevPageMobile'];
             const nextButtons = ['nextPage', 'nextPageMobile'];
             
@@ -644,15 +639,16 @@
                 btn.classList.toggle('cursor-not-allowed', currentPage >= totalPages);
             });
             
+            // Generate page numbers
             generatePageNumbers(totalPages);
         }
 
-        function generatePageNumbers(totalPages) {
+        function generatePageNumbers(totalPagesCount) {
             const pageNumbers = document.getElementById('pageNumbers');
             pageNumbers.innerHTML = '';
             
             let startPage = Math.max(1, currentPage - 2);
-            let endPage = Math.min(totalPages, startPage + 4);
+            let endPage = Math.min(totalPagesCount, startPage + 4);
             
             if (endPage - startPage < 4) {
                 startPage = Math.max(1, endPage - 4);
@@ -672,7 +668,6 @@
         }
 
         function changePage(direction) {
-            const totalPages = Math.ceil(filteredData.length / recordsPerPage);
             const newPage = currentPage + direction;
             
             if (newPage >= 1 && newPage <= totalPages) {
@@ -682,9 +677,7 @@
 
         function goToPage(page) {
             currentPage = page;
-            renderTableData();
-            updateStats();
-            updatePagination();
+            loadData(); // Reload data for the new page
         }
 
         // Utility functions
