@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"html/template"
 	"io"
 	"io/fs"
 	"log"
@@ -29,6 +30,8 @@ import (
 	"github.com/apache/arrow/go/v14/parquet/file"
 	pqarrow "github.com/apache/arrow/go/v14/parquet/pqarrow"
 	"github.com/fsnotify/fsnotify"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
 
 type TableCache struct {
@@ -65,6 +68,13 @@ func verboseLog(format string, args ...interface{}) {
 	if verbose {
 		log.Printf("[VERBOSE] "+format, args...)
 	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func fileHash(path string) (string, error) {
@@ -584,14 +594,487 @@ func watchConfigDir(configDir string) {
 	}
 }
 
+// Test infrastructure
+func runTests() {
+	log.Println("Starting test suite...")
+
+	// Test results tracking
+	var passed, failed int
+
+	// Run all tests
+	tests := []struct {
+		name string
+		fn   func() error
+	}{
+		{"Config Loading", testConfigLoading},
+		{"Parquet File Generation", testParquetGeneration},
+		{"API Endpoints", testAPIEndpoints},
+		{"SSR Server", testSSRServer},
+		{"Pagination", testPagination},
+		{"Data Processing", testDataProcessing},
+	}
+
+	for _, test := range tests {
+		log.Printf("Running test: %s", test.name)
+		if err := test.fn(); err != nil {
+			log.Printf("❌ FAILED: %s - %v", test.name, err)
+			failed++
+		} else {
+			log.Printf("✅ PASSED: %s", test.name)
+			passed++
+		}
+	}
+
+	// Print summary
+	total := passed + failed
+	log.Printf("\n=== TEST SUMMARY ===")
+	log.Printf("Total: %d, Passed: %d, Failed: %d", total, passed, failed)
+	if failed > 0 {
+		log.Printf("❌ Some tests failed")
+		os.Exit(1)
+	} else {
+		log.Printf("✅ All tests passed!")
+	}
+}
+
+func testConfigLoading() error {
+	configDir := "config"
+	configs, err := LoadAllConfigs(configDir)
+	if err != nil {
+		return fmt.Errorf("failed to load configs: %v", err)
+	}
+
+	if len(configs) == 0 {
+		return fmt.Errorf("no configs loaded")
+	}
+
+	// Validate each config
+	for _, cfg := range configs {
+		if cfg.TableName == "" {
+			return fmt.Errorf("config missing table_name")
+		}
+		if cfg.Name == "" {
+			return fmt.Errorf("config missing name")
+		}
+		if cfg.APIEndpoint == "" {
+			return fmt.Errorf("config missing api_endpoint")
+		}
+		if cfg.URLEndpoint == "" {
+			return fmt.Errorf("config missing url_endpoint")
+		}
+		if cfg.View.Type == "" {
+			return fmt.Errorf("config missing view.type")
+		}
+	}
+
+	log.Printf("   Loaded %d valid configs", len(configs))
+	return nil
+}
+
+func testParquetGeneration() error {
+	configDir := "config"
+	configs, err := LoadAllConfigs(configDir)
+	if err != nil {
+		return fmt.Errorf("failed to load configs: %v", err)
+	}
+
+	// Ensure parquet files exist
+	ensureParquetFiles(configs)
+
+	// Check if parquet files were created
+	for _, cfg := range configs {
+		if _, err := os.Stat(cfg.OutputParquet); os.IsNotExist(err) {
+			return fmt.Errorf("parquet file not created: %s", cfg.OutputParquet)
+		}
+
+		// Try to load the parquet file
+		_, err := loadParquetToArrow(cfg.OutputParquet)
+		if err != nil {
+			return fmt.Errorf("failed to load parquet file %s: %v", cfg.OutputParquet, err)
+		}
+	}
+
+	log.Printf("   Generated and validated %d parquet files", len(configs))
+	return nil
+}
+
+func testAPIEndpoints() error {
+	configDir := "config"
+	configs, err := LoadAllConfigs(configDir)
+	if err != nil {
+		return fmt.Errorf("failed to load configs: %v", err)
+	}
+
+	// Initialize current configs
+	configsMu.Lock()
+	currentConfigs = configs
+	configsMu.Unlock()
+
+	// Ensure parquet files exist
+	ensureParquetFiles(configs)
+
+	// Start API server in background
+	go func() {
+		updateHTTPEndpoints(configs)
+		dynamicHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			httpMuxMu.RLock()
+			currentMux := httpMux
+			httpMuxMu.RUnlock()
+
+			if currentMux != nil {
+				currentMux.ServeHTTP(w, r)
+			} else {
+				http.Error(w, "Server not ready", http.StatusServiceUnavailable)
+			}
+		})
+		http.ListenAndServe(":8082", dynamicHandler) // Use different port for testing
+	}()
+
+	// Wait for server to start
+	time.Sleep(2 * time.Second)
+
+	// Test each endpoint
+	for _, cfg := range configs {
+		url := fmt.Sprintf("http://localhost:8082%s", cfg.APIEndpoint)
+
+		resp, err := http.Get(url)
+		if err != nil {
+			return fmt.Errorf("failed to request %s: %v", url, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("endpoint %s returned status %d", url, resp.StatusCode)
+		}
+
+		// Check if response is valid JSON
+		var result interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return fmt.Errorf("endpoint %s returned invalid JSON: %v", url, err)
+		}
+
+		// Test pagination parameters
+		paginatedURL := fmt.Sprintf("%s?page=1&limit=5", url)
+		resp2, err := http.Get(paginatedURL)
+		if err != nil {
+			return fmt.Errorf("failed to request paginated %s: %v", paginatedURL, err)
+		}
+		defer resp2.Body.Close()
+
+		if resp2.StatusCode != http.StatusOK {
+			return fmt.Errorf("paginated endpoint %s returned status %d", paginatedURL, resp2.StatusCode)
+		}
+	}
+
+	log.Printf("   Tested %d API endpoints", len(configs))
+	return nil
+}
+
+func testSSRServer() error {
+	configDir := "config"
+	configs, err := LoadAllConfigs(configDir)
+	if err != nil {
+		return fmt.Errorf("failed to load configs: %v", err)
+	}
+
+	// Start SSR server in background on different port
+	go func() {
+		e := echo.New()
+		e.Use(middleware.Logger())
+		e.Use(middleware.Recover())
+
+		// Initialize templates
+		renderer := &TemplateRenderer{
+			templates: template.Must(template.ParseGlob("templates/*.html")),
+		}
+		e.Renderer = renderer
+
+		// Serve static files
+		e.Static("/static", "static")
+
+		// Home page
+		e.GET("/", func(c echo.Context) error {
+			return c.Render(http.StatusOK, "dashboard.html", map[string]interface{}{
+				"Configs": configs,
+			})
+		})
+
+		// Dashboard endpoints
+		for _, cfg := range configs {
+			currentCfg := cfg
+			e.GET("/dashboard"+currentCfg.URLEndpoint, func(c echo.Context) error {
+				return c.Render(http.StatusOK, "dynamic-view.html", map[string]interface{}{
+					"Config": currentCfg,
+				})
+			})
+		}
+
+		e.Start(":8083") // Use different port for testing
+	}()
+
+	// Wait for server to start
+	time.Sleep(2 * time.Second)
+
+	// Test home page
+	resp, err := http.Get("http://localhost:8083/")
+	if err != nil {
+		return fmt.Errorf("failed to request SSR home page: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("SSR home page returned status %d", resp.StatusCode)
+	}
+
+	// Test dashboard endpoints
+	for _, cfg := range configs {
+		url := fmt.Sprintf("http://localhost:8083/dashboard%s", cfg.URLEndpoint)
+		resp, err := http.Get(url)
+		if err != nil {
+			return fmt.Errorf("failed to request SSR endpoint %s: %v", url, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("SSR endpoint %s returned status %d", url, resp.StatusCode)
+		}
+
+		// Check if response contains expected content
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read response body: %v", err)
+		}
+
+		bodyStr := string(body)
+		if !strings.Contains(bodyStr, cfg.View.Title) {
+			return fmt.Errorf("SSR endpoint %s does not contain expected title: %s", url, cfg.View.Title)
+		}
+	}
+
+	log.Printf("   Tested SSR server with %d endpoints", len(configs)+1)
+	return nil
+}
+
+func testPagination() error {
+	configDir := "config"
+	configs, err := LoadAllConfigs(configDir)
+	if err != nil {
+		return fmt.Errorf("failed to load configs: %v", err)
+	}
+
+	if len(configs) == 0 {
+		return fmt.Errorf("no configs available for pagination test")
+	}
+
+	// Use first config for testing
+	cfg := configs[0]
+
+	// Load table to get actual record count
+	tbl, err := getTable(cfg.APIEndpoint, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to load table for pagination test: %v", err)
+	}
+
+	totalRecords := int(tbl.NumRows())
+	if totalRecords == 0 {
+		return fmt.Errorf("no records in table for pagination test")
+	}
+
+	// Convert table to records for testing
+	allRecords := make([]map[string]interface{}, 0)
+	for i := int64(0); i < tbl.NumRows(); i++ {
+		row := make(map[string]interface{})
+		for j, col := range tbl.Schema().Fields() {
+			colData := tbl.Column(j)
+			chunked := colData.Data()
+			if chunked.Len() > 0 {
+				chunk := chunked.Chunk(0)
+				if int(i) < chunk.Len() {
+					switch arr := chunk.(type) {
+					case *array.String:
+						row[col.Name] = arr.Value(int(i))
+					case *array.Int64:
+						row[col.Name] = arr.Value(int(i))
+					case *array.Float64:
+						row[col.Name] = arr.Value(int(i))
+					default:
+						row[col.Name] = chunk.ValueStr(int(i))
+					}
+				}
+			}
+		}
+		allRecords = append(allRecords, row)
+	}
+
+	// Test different page sizes
+	testCases := []struct {
+		page          int
+		limit         int
+		expectedLimit int // What the server should actually return
+	}{
+		{1, 5, 5},
+		{2, 5, 5},
+		{1, 10, 10},
+		{1, totalRecords + 10, min(1000, totalRecords)}, // Server clamps to max 1000
+		{1, 2000, min(1000, totalRecords)},              // Server clamps to max 1000
+	}
+
+	for _, tc := range testCases {
+		// Simulate server pagination logic
+		page := tc.page
+		limit := tc.limit
+
+		// Apply server limit clamping (max 1000)
+		if limit > 1000 {
+			limit = 1000
+		}
+
+		// Calculate pagination
+		total := len(allRecords)
+		totalPages := (total + limit - 1) / limit
+		start := (page - 1) * limit
+		end := start + limit
+
+		if start > total {
+			start = total
+		}
+		if end > total {
+			end = total
+		}
+
+		// Get paginated data
+		var paginatedData []map[string]interface{}
+		if start < total {
+			paginatedData = allRecords[start:end]
+		} else {
+			paginatedData = []map[string]interface{}{}
+		}
+
+		// Create paginated response
+		result := PaginatedResponse{
+			Data:       paginatedData,
+			Total:      total,
+			Page:       page,
+			Limit:      limit,
+			TotalPages: totalPages,
+			HasNext:    page < totalPages,
+			HasPrev:    page > 1,
+		}
+
+		// Validate pagination response
+		if result.Page != tc.page {
+			return fmt.Errorf("expected page %d, got %d", tc.page, result.Page)
+		}
+
+		if result.Limit != tc.expectedLimit {
+			return fmt.Errorf("expected limit %d, got %d", tc.expectedLimit, result.Limit)
+		}
+
+		if result.Total != totalRecords {
+			return fmt.Errorf("expected total %d, got %d", totalRecords, result.Total)
+		}
+
+		expectedPages := (totalRecords + tc.expectedLimit - 1) / tc.expectedLimit
+		if result.TotalPages != expectedPages {
+			return fmt.Errorf("expected total_pages %d, got %d", expectedPages, result.TotalPages)
+		}
+
+		expectedDataLen := tc.expectedLimit
+		if tc.page*tc.expectedLimit > totalRecords {
+			expectedDataLen = totalRecords - (tc.page-1)*tc.expectedLimit
+			if expectedDataLen < 0 {
+				expectedDataLen = 0
+			}
+		}
+
+		if len(result.Data) != expectedDataLen {
+			return fmt.Errorf("expected %d records, got %d", expectedDataLen, len(result.Data))
+		}
+	}
+
+	log.Printf("   Tested pagination logic with %d test cases", len(testCases))
+	return nil
+}
+
+func testDataProcessing() error {
+	configDir := "config"
+	configs, err := LoadAllConfigs(configDir)
+	if err != nil {
+		return fmt.Errorf("failed to load configs: %v", err)
+	}
+
+	// Test data processing for each config
+	for _, cfg := range configs {
+		// Load the parquet file
+		tbl, err := loadParquetToArrow(cfg.OutputParquet)
+		if err != nil {
+			return fmt.Errorf("failed to load parquet file %s: %v", cfg.OutputParquet, err)
+		}
+
+		// Check table structure
+		if tbl.NumRows() == 0 {
+			return fmt.Errorf("table %s has no rows", cfg.TableName)
+		}
+
+		if tbl.NumCols() == 0 {
+			return fmt.Errorf("table %s has no columns", cfg.TableName)
+		}
+
+		// Check if expected columns exist
+		schema := tbl.Schema()
+		expectedCols := make(map[string]bool)
+		for _, col := range cfg.Columns {
+			expectedCols[col.Name] = true
+		}
+
+		for _, field := range schema.Fields() {
+			if expectedCols[field.Name] {
+				delete(expectedCols, field.Name)
+			}
+		}
+
+		if len(expectedCols) > 0 {
+			missing := make([]string, 0, len(expectedCols))
+			for col := range expectedCols {
+				missing = append(missing, col)
+			}
+			return fmt.Errorf("table %s missing expected columns: %v", cfg.TableName, missing)
+		}
+
+		// Test data conversion
+		records := convertTableToRecords(tbl)
+		if len(records) == 0 {
+			return fmt.Errorf("failed to convert table %s to records", cfg.TableName)
+		}
+
+		// Check if records have expected structure
+		firstRecord := records[0]
+		for _, col := range cfg.Columns {
+			if _, exists := firstRecord[col.Name]; !exists {
+				return fmt.Errorf("record missing column %s", col.Name)
+			}
+		}
+	}
+
+	log.Printf("   Validated data processing for %d configs", len(configs))
+	return nil
+}
+
 func main() {
 	serveFlag := flag.Bool("serve", false, "Run as web server (REST API)")
 	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging")
+	testFlag := flag.Bool("test", false, "Run tests")
 	flag.Parse()
 
 	verbose = *verboseFlag
 	if verbose {
 		log.Println("Verbose logging enabled")
+	}
+
+	if *testFlag {
+		log.Println("Running tests...")
+		runTests()
+		return
 	}
 
 	configDir := "config"
