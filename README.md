@@ -27,6 +27,22 @@ A high-performance analytics dashboard built with Go that processes CSV data and
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
+## Performance Features
+
+- **In-memory caching** with TTL for Arrow tables
+- **Lazy loading** of Parquet files
+- **Server-side pagination** for large datasets
+- **Efficient data structures** with Apache Arrow
+- **Hot configuration reloading** without downtime
+
+## Dependencies
+
+- **Apache Arrow** - High-performance columnar data
+- **Echo Framework** - Web framework for SSR
+- **Chart.js** - Client-side data visualization
+- **Tailwind CSS** - Utility-first CSS framework
+- **fsnotify** - File system event monitoring
+
 ## Quick Start
 
 ### 1. Install Dependencies
@@ -221,18 +237,3 @@ go run main.go ssr_server.go --test
 go run main.go ssr_server.go --serve --verbose
 ```
 
-## Performance Features
-
-- **In-memory caching** with TTL for Arrow tables
-- **Lazy loading** of Parquet files
-- **Server-side pagination** for large datasets
-- **Efficient data structures** with Apache Arrow
-- **Hot configuration reloading** without downtime
-
-## Dependencies
-
-- **Apache Arrow** - High-performance columnar data
-- **Echo Framework** - Web framework for SSR
-- **Chart.js** - Client-side data visualization
-- **Tailwind CSS** - Utility-first CSS framework
-- **fsnotify** - File system event monitoring
